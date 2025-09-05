@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(/C:\\Users\\huyth\\Updatelocknlock\\src/**)",
+      "Read(/C:\\Users\\huyth\\Updatelocknlock\\src\\components/**)"
+    ],
+    "deny": [],
+    "ask": []
+  },
+  "outputStyle": "default"
+}

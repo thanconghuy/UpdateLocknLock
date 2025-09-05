@@ -1,0 +1,127 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+}
+
+/* Design system tokens */
+:root {
+  --color-primary: #6366f1; /* indigo-500 */
+  --color-bg: #ffffff;
+  --color-bg-muted: #fafafa;
+  --text-900: #1f2937; /* gray-800 */
+  --text-500: #6b7280; /* gray-500 */
+  --success: #10b981; /* emerald-500 */
+  --warning: #f59e0b; /* amber-500 */
+  --danger: #ef4444; /* red-500 */
+
+  --space-6: 1.5rem; /* 24px */
+  --space-4: 1rem;   /* 16px */
+
+  --radius-card: 12px;
+  --radius-btn: 6px;
+
+  --shadow-sm: 0 1px 2px rgba(31,41,55,0.06), 0 1px 0 rgba(31,41,55,0.04);
+  --shadow-lg: 0 10px 25px rgba(31,41,55,0.12);
+
+  --font-stack: Inter, 'Segoe UI', Roboto, 'Noto Sans', 'Liberation Sans', Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+}
+
+/* Base */
+body {
+  background: var(--color-bg);
+  color: var(--text-900);
+  font-family: var(--font-stack);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Panels / Cards */
+.neo-panel {
+  background: var(--color-bg);
+  border-radius: var(--radius-card);
+  border: 1px solid rgba(31,41,55,0.06);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-6);
+}
+
+.neo-card {
+  padding: var(--space-6);
+  border-radius: var(--radius-card);
+  background: linear-gradient(180deg, var(--color-bg), var(--color-bg-muted));
+  box-shadow: var(--shadow-sm);
+  border: 1px solid rgba(31,41,55,0.04);
+}
+
+/* Buttons */
+.neo-btn {
+  background: transparent;
+  border-radius: var(--radius-btn);
+  border: 1px solid rgba(31,41,55,0.08);
+  padding: 1rem; /* 1rem per design */
+  padding-left: 1rem;
+  padding-right: 1rem;
+  cursor: pointer;
+  color: var(--text-900);
+  box-shadow: var(--shadow-sm);
+  font-weight: 600;
+}
+
+.neo-btn.primary {
+  background: var(--color-primary);
+  color: white;
+  border: none;
+  box-shadow: var(--shadow-lg);
+}
+
+.neo-btn.ghost {
+  background: transparent;
+  color: var(--text-900);
+}
+
+/* Utilities */
+.muted { color: var(--text-500); }
+.accent { color: var(--color-primary); }
+
+.filter-pill {
+  background: var(--color-bg-muted);
+  border: 1px solid rgba(31,41,55,0.04);
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+}
+
+.table-neo thead tr th {
+  border-bottom: 2px solid rgba(31,41,55,0.06);
+  color: var(--text-500);
+}
+
+.table-neo tbody tr td {
+  border-bottom: 1px dashed rgba(31,41,55,0.04);
+}
+
+/* spacing helpers */
+.g-gap { gap: var(--space-6); }
+.p-card { padding: var(--space-6); }
+.btn-padding { padding: var(--space-4); }
+
+/* Vietnamese text support */
+* {
+  text-rendering: optimizeLegibility;
+  -webkit-font-feature-settings: "liga" 1, "calt" 1, "kern" 1;
+  font-feature-settings: "liga" 1, "calt" 1, "kern" 1;
+}
+
+/* Better text handling for Vietnamese diacritics */
+body, input, textarea, select, button {
+  font-variant-ligatures: normal;
+  font-variant-numeric: normal;
+  font-kerning: normal;
+}
+
+/* Ensure proper line height for Vietnamese text */
+.vietnamese-text {
+  line-height: 1.6;
+  word-break: break-word;
+}
