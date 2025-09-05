@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react'
 import type { SupabaseConfig, ProductData } from '../types'
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import { detectPlatformLinks } from '../utils/links'
+import { ENV, hasRequiredEnvVars, isProductionMode } from '../config/env'
 
 interface SupabaseConnectorProps {
   onConnect: (config: SupabaseConfig) => void
@@ -10,12 +11,13 @@ interface SupabaseConnectorProps {
 }
 
 export default function SupabaseConnector({ onConnect, onUpload, data }: SupabaseConnectorProps) {
-  const [url, setUrl] = useState('')
-  const [key, setKey] = useState('')
+  const [url, setUrl] = useState(ENV.SUPABASE_URL)
+  const [key, setKey] = useState(ENV.SUPABASE_ANON_KEY)
   const [status, setStatus] = useState<string | null>(null)
-  const [table, setTable] = useState('products')
-  const [auditTable, setAuditTable] = useState('product_updates')
+  const [table, setTable] = useState(ENV.DEFAULT_PRODUCTS_TABLE)
+  const [auditTable, setAuditTable] = useState(ENV.DEFAULT_AUDIT_TABLE)
   const [auditEnabled, setAuditEnabled] = useState(true)
+  const [showCredentials, setShowCredentials] = useState(!isProductionMode())
   // cache the client so we only create/connect once per session
   const clientRef = useRef<SupabaseClient | null>(null)
 
@@ -183,14 +185,68 @@ export default function SupabaseConnector({ onConnect, onUpload, data }: Supabas
     }
   }
 
+  const maskValue = (value: string) => {
+    if (!value || value.length <= 8) return value
+    return value.slice(0, 4) + '***' + value.slice(-4)
+  }
+
+  const isConfiguredFromEnv = hasRequiredEnvVars()
+
   return (
     <div className="bg-white rounded p-4 shadow">
-      <h3 className="font-semibold">Supabase</h3>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="font-semibold">Supabase</h3>
+        {isConfiguredFromEnv && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded">
+              ✓ Configured via Environment
+            </span>
+            {isProductionMode() && (
+              <button 
+                className="text-xs text-blue-600 underline"
+                onClick={() => setShowCredentials(!showCredentials)}
+              >
+                {showCredentials ? 'Hide' : 'Show'} Config
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      
       <div className="mt-2 grid grid-cols-1 gap-2">
-        <input className="p-2 border" placeholder="Supabase URL" value={url} onChange={(e) => setUrl(e.target.value)} />
-        <input className="p-2 border" placeholder="Supabase API Key" value={key} onChange={(e) => setKey(e.target.value)} />
-        <input className="p-2 border" placeholder="Table name (e.g. products)" value={table} onChange={(e) => setTable(e.target.value)} />
-        <input className="p-2 border" placeholder="Audit table (e.g. product_updates)" value={auditTable} onChange={(e) => setAuditTable(e.target.value)} />
+        {(!isConfiguredFromEnv || showCredentials) && (
+          <>
+            <input 
+              className="p-2 border" 
+              placeholder="Supabase URL" 
+              type={isProductionMode() && !showCredentials ? "password" : "text"}
+              value={isProductionMode() && !showCredentials ? maskValue(url) : url} 
+              onChange={(e) => setUrl(e.target.value)}
+              disabled={isConfiguredFromEnv && isProductionMode()}
+            />
+            <input 
+              className="p-2 border" 
+              placeholder="Supabase API Key" 
+              type={isProductionMode() && !showCredentials ? "password" : "text"}
+              value={isProductionMode() && !showCredentials ? maskValue(key) : key} 
+              onChange={(e) => setKey(e.target.value)}
+              disabled={isConfiguredFromEnv && isProductionMode()}
+            />
+          </>
+        )}
+        
+        <input 
+          className="p-2 border" 
+          placeholder="Table name (e.g. products)" 
+          value={table} 
+          onChange={(e) => setTable(e.target.value)} 
+        />
+        <input 
+          className="p-2 border" 
+          placeholder="Audit table (e.g. product_updates)" 
+          value={auditTable} 
+          onChange={(e) => setAuditTable(e.target.value)} 
+        />
         <div className="flex items-center gap-2 p-2 border rounded">
           <input 
             type="checkbox" 
@@ -203,9 +259,17 @@ export default function SupabaseConnector({ onConnect, onUpload, data }: Supabas
         <div className="flex gap-2">
           <button className="px-3 py-1 bg-blue-600 text-white rounded" onClick={handleConnect}>Connect</button>
           <button className="px-3 py-1 bg-green-600 text-white rounded" onClick={handleUpload}>Upload All</button>
-          <button className="px-3 py-1 border text-sm" onClick={clearSaved}>Clear saved</button>
+          {!isProductionMode() && (
+            <button className="px-3 py-1 border text-sm" onClick={clearSaved}>Clear saved</button>
+          )}
         </div>
         {status && <div className="mt-2 text-sm">Status: {status}</div>}
+        
+        {isConfiguredFromEnv && (
+          <div className="mt-2 text-xs text-gray-500 bg-gray-50 p-2 rounded">
+            ℹ️ Credentials are loaded from environment variables for security.
+          </div>
+        )}
       </div>
     </div>
   )

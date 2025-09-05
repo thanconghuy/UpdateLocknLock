@@ -1,11 +1,12 @@
 import axios from 'axios'
 import type { ProductData } from '../types'
 import { parsePriceText, formatPriceToText } from '../utils/priceUtils'
+import { ENV } from '../config/env'
 
 const WOOCOMMERCE_CONFIG = {
-  baseUrl: 'https://locknlockvietnam.com',
-  consumerKey: 'ck_293073021ff480b3b0b5e830a268a2c2dc3957a4',
-  consumerSecret: 'cs_e6daaae3b6a53b5ae05ba014dc80a705399b67e3'
+  baseUrl: ENV.WOOCOMMERCE_BASE_URL,
+  consumerKey: ENV.WOOCOMMERCE_CONSUMER_KEY,
+  consumerSecret: ENV.WOOCOMMERCE_CONSUMER_SECRET
 }
 
 export type WooCommerceProduct = {
