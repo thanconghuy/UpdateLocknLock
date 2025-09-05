@@ -199,6 +199,11 @@ export default function SupabaseConnector({ onConnect, onUpload, data }: Supabas
 
   const isConfiguredFromEnv = hasRequiredEnvVars()
 
+  // Hide entire component when configured from environment in production
+  if (isConfiguredFromEnv && isProductionMode()) {
+    return null
+  }
+
   return (
     <div className="bg-white rounded p-4 shadow">
       <div className="flex items-center justify-between mb-2">
