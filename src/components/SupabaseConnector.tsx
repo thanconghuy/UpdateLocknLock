@@ -17,7 +17,7 @@ export default function SupabaseConnector({ onConnect, onUpload, data }: Supabas
   const [table, setTable] = useState(ENV.DEFAULT_PRODUCTS_TABLE)
   const [auditTable, setAuditTable] = useState(ENV.DEFAULT_AUDIT_TABLE)
   const [auditEnabled, setAuditEnabled] = useState(true)
-  const [showCredentials, setShowCredentials] = useState(!isProductionMode())
+  const [showCredentials, setShowCredentials] = useState(false)
   // cache the client so we only create/connect once per session
   const clientRef = useRef<SupabaseClient | null>(null)
 
@@ -149,7 +149,7 @@ export default function SupabaseConnector({ onConnect, onUpload, data }: Supabas
     }
   }
 
-  // load saved creds on mount
+  // load saved creds on mount and auto-connect if env vars available
   React.useEffect(() => {
     try {
       const su = localStorage.getItem('supabase:url')
@@ -164,6 +164,13 @@ export default function SupabaseConnector({ onConnect, onUpload, data }: Supabas
       if (sae !== null) setAuditEnabled(sae === 'true')
     } catch (err) {
       // ignore
+    }
+
+    // Auto-connect if environment variables are configured
+    if (hasRequiredEnvVars()) {
+      setTimeout(() => {
+        handleConnect()
+      }, 500)
     }
   }, [])
 
@@ -199,16 +206,14 @@ export default function SupabaseConnector({ onConnect, onUpload, data }: Supabas
         {isConfiguredFromEnv && (
           <div className="flex items-center gap-2">
             <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded">
-              ✓ Configured via Environment
+              ✓ Auto-configured and Connected
             </span>
-            {isProductionMode() && (
-              <button 
-                className="text-xs text-blue-600 underline"
-                onClick={() => setShowCredentials(!showCredentials)}
-              >
-                {showCredentials ? 'Hide' : 'Show'} Config
-              </button>
-            )}
+            <button 
+              className="text-xs text-blue-600 underline"
+              onClick={() => setShowCredentials(!showCredentials)}
+            >
+              {showCredentials ? 'Hide' : 'Show'} Config
+            </button>
           </div>
         )}
       </div>
@@ -257,7 +262,9 @@ export default function SupabaseConnector({ onConnect, onUpload, data }: Supabas
           <label htmlFor="audit-enabled" className="text-sm">Enable audit logging</label>
         </div>
         <div className="flex gap-2">
-          <button className="px-3 py-1 bg-blue-600 text-white rounded" onClick={handleConnect}>Connect</button>
+          {!isConfiguredFromEnv && (
+            <button className="px-3 py-1 bg-blue-600 text-white rounded" onClick={handleConnect}>Connect</button>
+          )}
           <button className="px-3 py-1 bg-green-600 text-white rounded" onClick={handleUpload}>Upload All</button>
           {!isProductionMode() && (
             <button className="px-3 py-1 border text-sm" onClick={clearSaved}>Clear saved</button>
