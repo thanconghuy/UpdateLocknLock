@@ -3,8 +3,10 @@ import FileUploader from './FileUploader'
 import DataTable from './DataTable'
 import ValidationPanel from './ValidationPanel'
 import SupabaseConnector from './SupabaseConnector'
+import DatabaseUploader from './DatabaseUploader'
 import type { CSVRow, ProductData } from '../types'
 import { smartMapCSVData } from '../utils/smartCSVMapper'
+import { hasRequiredEnvVars, isProductionMode } from '../config/env'
 
 interface Props {
   rows: ProductData[]
@@ -39,8 +41,14 @@ export default function ImportPage({ rows, setRows, errors, setErrors }: Props) 
         <div className="neo-card p-4">
           <ValidationPanel errors={[]} warnings={[]} onFix={() => {}} />
         </div>
+        
+        {/* Show DatabaseUploader in production when env vars configured, otherwise show SupabaseConnector */}
         <div className="neo-card p-4">
-          <SupabaseConnector onConnect={() => {}} data={rows} />
+          {hasRequiredEnvVars() && isProductionMode() ? (
+            <DatabaseUploader data={rows} />
+          ) : (
+            <SupabaseConnector onConnect={() => {}} data={rows} />
+          )}
         </div>
       </div>
     </div>
