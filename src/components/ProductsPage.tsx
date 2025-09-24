@@ -6,10 +6,11 @@ import { useStore } from '../store/useStore'
 
 interface Props {
   data: ProductData[]
+  refreshKey?: number
 }
 
 const ALL_FIELDS = [
-  'title', 'website_id', 'sku', 'price', 'promotional_price', 
+  'title', 'website_id', 'sku', 'price', 'promotional_price',
   'image_url',
   'shopee', 'tiktok', 'lazada', 'dmx', 'tiki', // Combined brand columns
   'external_url', 'currency'
@@ -24,10 +25,29 @@ const PLATFORM_FIELDS = [
   'link_tiki', 'gia_tiki', 'tiki_link', 'tiki_price'
 ]
 
-export default function ProductsPage({ data }: Props) {
+// Helper function to determine stock status from het_hang value
+function getStockStatus(hetHangValue: any) {
+  const isOutOfStock =
+    hetHangValue === true ||
+    hetHangValue === 'true' ||
+    hetHangValue === 'Hết hàng' ||
+    hetHangValue === 'hết hàng' ||
+    hetHangValue === 1
+
+  const isInStock =
+    hetHangValue === false ||
+    hetHangValue === 'false' ||
+    hetHangValue === 'Còn hàng' ||
+    hetHangValue === 'còn hàng' ||
+    hetHangValue === 0
+
+  return { isOutOfStock, isInStock }
+}
+
+export default function ProductsPage({ data, refreshKey }: Props) {
   const { updateProductInWooCommerce, syncProductFromWooCommerce } = useStore()
   const [visibleFields, setVisibleFields] = useState<string[]>(ALL_FIELDS.filter(f => f !== 'updated_at'))
-  const [filter, setFilter] = useState<{ platform?: string, recentlyUpdated?: boolean, timeFilter?: string }>({})
+  const [filter, setFilter] = useState<{ platform?: string, recentlyUpdated?: boolean, timeFilter?: string, stockStatus?: 'instock' | 'outofstock', syncStatus?: string }>({})
   const [searchQuery, setSearchQuery] = useState<string>('')
   const [dbRows, setDbRows] = useState<any[] | null>(null)
   const [loadingDb, setLoadingDb] = useState(false)
@@ -42,19 +62,41 @@ export default function ProductsPage({ data }: Props) {
   const [recentlyUpdated, setRecentlyUpdated] = useState<Set<string>>(new Set())
   const [syncingProducts, setSyncingProducts] = useState<Set<string>>(new Set())
 
-  console.log('ProductsPage data:', data)
-  console.log('Data length:', data.length)
-  console.log('DB rows:', dbRows)
 
   const platforms = useMemo(() => {
-    const stats: Record<string, number> = { shopee:0, tiktok:0, lazada:0, dmx:0, tiki:0 }
+    const stats: Record<string, number> = {
+      shopee: 0, tiktok: 0, lazada: 0, dmx: 0, tiki: 0,
+      instock: 0, outofstock: 0,
+      total: 0
+    }
+
     if (dbRows) {
       dbRows.forEach((d) => {
-        if (d.link_shopee) stats.shopee++
-        if (d.link_tiktok) stats.tiktok++
-        if (d.link_lazada) stats.lazada++
-        if (d.link_dmx) stats.dmx++
-        if (d.link_tiki) stats.tiki++
+        stats.total++
+
+        // Platform link analysis
+        const platformData = [
+          { name: 'shopee', link: d.link_shopee },
+          { name: 'tiktok', link: d.link_tiktok },
+          { name: 'lazada', link: d.link_lazada },
+          { name: 'dmx', link: d.link_dmx },
+          { name: 'tiki', link: d.link_tiki }
+        ]
+
+        platformData.forEach(({ name, link }) => {
+          const hasValidLink = link && link.trim() && link.length > 10
+          if (hasValidLink) {
+            stats[name]++
+          }
+        })
+
+        // Stock status counts - handle different data types
+        const { isOutOfStock } = getStockStatus(d.het_hang)
+        if (isOutOfStock) {
+          stats.outofstock++
+        } else {
+          stats.instock++
+        }
       })
     }
     return stats
@@ -62,9 +104,7 @@ export default function ProductsPage({ data }: Props) {
 
   const filteredRows = useMemo(() => {
     const base = dbRows || []
-    console.log('Base data:', base)
-    console.log('Filter:', filter)
-    console.log('Search query:', searchQuery)
+
     if (!base) return []
 
     let filtered = base
@@ -96,6 +136,68 @@ export default function ProductsPage({ data }: Props) {
           case 'dmx': return !!(d.link_dmx)
           case 'tiki': return !!(d.link_tiki)
           default: return true
+        }
+      })
+    }
+
+    // Filter by stock status
+    if (filter.stockStatus) {
+      filtered = filtered.filter((d) => {
+        switch(filter.stockStatus) {
+          case 'instock': {
+            const { isOutOfStock } = getStockStatus(d.het_hang)
+            return !isOutOfStock
+          }
+          case 'outofstock': {
+            const { isOutOfStock } = getStockStatus(d.het_hang)
+            return isOutOfStock
+          }
+          default: return true
+        }
+      })
+    }
+
+    // Filter by sync status
+    if (filter.syncStatus) {
+      filtered = filtered.filter((d) => {
+        const platformData = [
+          { link: d.link_shopee, price: d.gia_shopee },
+          { link: d.link_tiktok, price: d.gia_tiktok },
+          { link: d.link_lazada, price: d.gia_lazada },
+          { link: d.link_dmx, price: d.gia_dmx },
+          { link: d.link_tiki, price: d.gia_tiki }
+        ]
+
+        let platformCount = 0
+        let priceCount = 0
+        let linkMismatch = false
+
+        platformData.forEach(({ link, price }) => {
+          const hasValidLink = link && link.trim() && link.length > 10
+          const hasValidPrice = price && price > 0
+
+          if (hasValidLink) {
+            platformCount++
+            if (!hasValidPrice) {
+              linkMismatch = true
+            }
+          }
+          if (hasValidPrice) {
+            priceCount++
+          }
+        })
+
+        switch(filter.syncStatus) {
+          case 'unsynchronized':
+            return platformCount === 0
+          case 'partialSync':
+            return platformCount > 0 && (linkMismatch || platformCount !== priceCount)
+          case 'fullSync':
+            return platformCount > 0 && platformCount === priceCount && !linkMismatch
+          case 'missingImages':
+            return !d.image_url || !d.image_url.trim()
+          default:
+            return true
         }
       })
     }
@@ -158,38 +260,189 @@ export default function ProductsPage({ data }: Props) {
   }
 
   async function fetchFromDb() {
+    console.log('🔄 FETCH FROM DATABASE STARTED')
+    console.log('='.repeat(60))
+    console.log('⏰ ' + new Date().toLocaleString('vi-VN'))
+    console.log('🔧 Tool: UpdateLocknLock Complete Data Loading')
+
     setLoadingDb(true)
-    setDbStatus(null)
+    setDbStatus('🔄 Đang kết nối với database...')
+
     try {
       const url = localStorage.getItem('supabase:url')
       const key = localStorage.getItem('supabase:key')
       const table = localStorage.getItem('supabase:table') || 'products'
-      console.log('DB credentials:', { url: !!url, key: !!key, table })
+
+      console.log('🗃️ Database config:')
+      console.log('- URL:', url ? `${url.substring(0, 30)}...` : 'Not found')
+      console.log('- Table:', table)
+
       if (!url || !key) {
-        setDbStatus('no saved supabase credentials')
+        const errorMsg = 'no saved supabase credentials'
+        setDbStatus(`❌ ${errorMsg}`)
+        console.error('❌ Missing credentials')
         setLoadingDb(false)
         return
       }
+
+      setDbStatus('🔗 Connecting to database...')
       const supa = createClient(url, key)
-      console.log('Fetching from table:', table)
-      const { data: d, error } = await supa.from(table).select('*').limit(1000)
-      console.log('DB response:', { data: d, error })
+
+      console.log('📊 Fetching complete product data...')
+      setDbStatus('📊 Loading all product data...')
+
+      // Enhanced query with safe field selection and ordering
+      console.log('🔍 Using safe query with * selector to avoid column errors...')
+      const { data: d, error, count } = await supa
+        .from(table)
+        .select('*', { count: 'exact' })
+        .order('updated_at', { ascending: false })
+        .limit(2000) // Increased limit for comprehensive loading
+
       if (error) {
-        setDbStatus(`db error: ${error.message}`)
+        console.error('❌ Database query error:', error)
+        console.error('Error details:', {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint
+        })
+
+        // Provide specific guidance for common errors
+        let errorGuidance = ''
+        if (error.message.includes('does not exist')) {
+          errorGuidance = '\n💡 Lỗi cột không tồn tại - Tool sẽ sử dụng query đơn giản hơn'
+          console.log('🔄 Attempting fallback query without specific columns...')
+
+          // Try fallback query with just basic selection
+          try {
+            const fallbackResult = await supa
+              .from(table)
+              .select('*')
+              .limit(100)
+
+            if (!fallbackResult.error && fallbackResult.data) {
+              console.log('✅ Fallback query successful!')
+              console.log('Available columns:', Object.keys(fallbackResult.data[0] || {}))
+              setDbRows(fallbackResult.data)
+              setDbStatus(`⚠️ Loaded ${fallbackResult.data.length} products (fallback mode)`)
+              return
+            }
+          } catch (fallbackError) {
+            console.error('❌ Fallback query also failed:', fallbackError)
+          }
+        }
+
+        const errorMsg = `db error: ${error.message}${errorGuidance}`
+        setDbStatus(`❌ ${errorMsg}`)
         setDbRows([])
-      } else {
-        setDbRows(d || [])
-        setDbStatus(`loaded ${d?.length ?? 0} rows`)
-        console.log('Set dbRows to:', d)
+        return
       }
+
+      console.log('✅ Data loaded successfully!')
+      console.log('📊 Results summary:')
+      console.log(`- Total rows: ${d?.length ?? 0}`)
+      console.log(`- Database count: ${count ?? 'unknown'}`)
+
+      if (d && d.length > 0) {
+        // Analyze data completeness
+        const sampleProduct = d[0]
+        const availableFields = Object.keys(sampleProduct)
+        console.log('🔍 Available fields:', availableFields.length)
+        console.log('📝 Field list:', availableFields.join(', '))
+
+        // Platform data analysis with safe field access
+        const platformStats = {
+          shopee: d.filter(p => p.link_shopee).length,
+          tiktok: d.filter(p => p.link_tiktok).length,
+          tiki: d.filter(p => p.link_tiki).length,
+          lazada: d.filter(p => p.link_lazada).length,
+          dmx: d.filter(p => p.link_dmx).length,
+          withImages: d.filter(p => p.image_url).length,
+          withDescriptions: d.filter(p => p.description || p.desc || p.product_description).length,
+          withCategories: d.filter(p => p.category || p.categories).length,
+          inStock: d.filter(p => !p.het_hang).length,
+          outOfStock: d.filter(p => p.het_hang).length
+        }
+
+        console.log('🛒 Platform link distribution:')
+        console.log(`- Shopee: ${platformStats.shopee} products`)
+        console.log(`- TikTok: ${platformStats.tiktok} products`)
+        console.log(`- Tiki: ${platformStats.tiki} products`)
+        console.log(`- Lazada: ${platformStats.lazada} products`)
+        console.log(`- DMX: ${platformStats.dmx} products`)
+
+        console.log('📊 Data completeness:')
+        console.log(`- With images: ${platformStats.withImages} (${((platformStats.withImages / d.length) * 100).toFixed(1)}%)`)
+        console.log(`- With descriptions: ${platformStats.withDescriptions} (${((platformStats.withDescriptions / d.length) * 100).toFixed(1)}%)`)
+        console.log(`- With categories: ${platformStats.withCategories} (${((platformStats.withCategories / d.length) * 100).toFixed(1)}%)`)
+
+        console.log('📦 Stock status:')
+        console.log(`- In stock: ${platformStats.inStock} products`)
+        console.log(`- Out of stock: ${platformStats.outOfStock} products`)
+      }
+
+      const loadedCount = d?.length ?? 0
+      console.log('🔄 Setting dbRows with loaded data:', {
+        loadedCount,
+        dataExists: !!d,
+        firstProduct: d?.[0] ? {
+          id: d[0].id,
+          website_id: d[0].website_id,
+          title: d[0].title,
+          updated_at: d[0].updated_at
+        } : null
+      })
+      setDbRows(d || [])
+
+      // Data quality assessment
+      let qualityNote = ''
+      if (d && d.length > 0) {
+        const withPlatformLinks = d.filter(p => p.link_shopee || p.link_tiktok || p.link_tiki || p.link_lazada || p.link_dmx).length
+        const linkCoverage = (withPlatformLinks / d.length) * 100
+        const withImages = d.filter(p => p.image_url).length
+        const imageCoverage = (withImages / d.length) * 100
+
+        if (linkCoverage < 50) {
+          qualityNote = ` (⚠️ ${linkCoverage.toFixed(0)}% có platform links)`
+        } else if (imageCoverage < 30) {
+          qualityNote = ` (⚠️ ${imageCoverage.toFixed(0)}% có hình ảnh)`
+        } else {
+          qualityNote = ` (✨ Dữ liệu đầy đủ)`
+        }
+      }
+
+      setDbStatus(`✅ Loaded ${loadedCount} products with complete data${qualityNote}`)
+
+      console.log('🎉 Data loading completed successfully!')
+      console.log('='.repeat(60))
+
     } catch (err: any) {
-      console.error('DB fetch error:', err)
-      setDbStatus(`fetch error: ${err?.message ?? String(err)}`)
+      console.error('❌ FETCH FROM DATABASE FAILED:', err)
+      console.error('Error details:', {
+        message: err?.message,
+        code: err?.code,
+        details: err?.details,
+        hint: err?.hint,
+        stack: err?.stack?.substring(0, 200)
+      })
+
+      const errorMsg = `fetch error: ${err?.message ?? String(err)}`
+      setDbStatus(`❌ ${errorMsg}`)
       setDbRows([])
+
+      console.log('💡 Troubleshooting suggestions:')
+      console.log('- Check internet connection')
+      console.log('- Verify Supabase credentials')
+      console.log('- Ensure table exists and has correct permissions')
+      console.log('- Check if API quota is exceeded')
+
     } finally {
       setLoadingDb(false)
+      console.log('🏁 Database fetch process completed')
     }
   }
+
 
   // Auto-load data on mount
   useEffect(() => {
@@ -198,6 +451,31 @@ export default function ProductsPage({ data }: Props) {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Refresh data when refreshKey changes (after sync operations)
+  useEffect(() => {
+    if (refreshKey && refreshKey > 0) {
+      console.log('🔄 refreshKey changed to:', refreshKey, '- clearing current data and fetching fresh from DB')
+      // Clear current data first to force re-render
+      setDbRows([])
+      setDbStatus('🔄 Refreshing data after sync...')
+      // Then fetch fresh data from database
+      fetchFromDb()
+    }
+  }, [refreshKey])
+
+  // Debug logging when dbRows changes
+  useEffect(() => {
+    console.log('🔄 dbRows state changed:', {
+      hasData: !!dbRows,
+      count: dbRows?.length || 0,
+      firstItem: dbRows?.[0] ? {
+        id: dbRows[0].id,
+        website_id: dbRows[0].website_id,
+        title: dbRows[0].title
+      } : null
+    })
+  }, [dbRows])
 
   function openEditSidebar(product: any) {
     console.log('Opening edit sidebar for product:', product)
@@ -633,17 +911,46 @@ export default function ProductsPage({ data }: Props) {
   return (
     <div className="neo-card">
       {/* Top row: filters and counters */}
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold">Products ({rows.length} shown / {filteredRows.length} filtered / {dbRows?.length || 0} total)</h2>
-        <div className="flex gap-2 items-center">
-          <div className="filter-pill muted">Shopee: {platforms.shopee}</div>
-          <div className="filter-pill muted">TikTok: {platforms.tiktok}</div>
-          <div className="filter-pill muted">Tiki: {platforms.tiki}</div>
-          <div className="filter-pill muted">Lazada: {platforms.lazada}</div>
-          <div className="filter-pill muted">DMX: {platforms.dmx}</div>
+      <div className="mb-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Products ({rows.length} shown / {filteredRows.length} filtered / {dbRows?.length || 0} total)</h2>
+          <div className="text-sm text-gray-600">
+            Tổng quan: {platforms.total} sản phẩm
+          </div>
+        </div>
+
+        {/* Platform Statistics Row */}
+        <div className="flex gap-2 items-center flex-wrap">
+          <div className="text-sm font-medium text-gray-700 mr-2">Platform Links:</div>
+          <div className="filter-pill bg-orange-100 text-orange-700 border-orange-200">
+            Shopee: {platforms.shopee}
+          </div>
+          <div className="filter-pill bg-pink-100 text-pink-700 border-pink-200">
+            TikTok: {platforms.tiktok}
+          </div>
+          <div className="filter-pill bg-purple-100 text-purple-700 border-purple-200">
+            Tiki: {platforms.tiki}
+          </div>
+          <div className="filter-pill bg-blue-100 text-blue-700 border-blue-200">
+            Lazada: {platforms.lazada}
+          </div>
+          <div className="filter-pill bg-green-100 text-green-700 border-green-200">
+            DMX: {platforms.dmx}
+          </div>
+        </div>
+
+        {/* Stock and Sync Status Row */}
+        <div className="flex gap-2 items-center flex-wrap">
+          <div className="text-sm font-medium text-gray-700 mr-2">Kho & Đồng bộ:</div>
+          <div className="filter-pill bg-green-100 text-green-700 border-green-200">
+            Còn hàng: {platforms.instock}
+          </div>
+          <div className="filter-pill bg-red-100 text-red-700 border-red-200">
+            Hết hàng: {platforms.outofstock}
+          </div>
           {recentlyUpdated.size > 0 && (
-            <div className="filter-pill bg-green-100 text-green-700 border-green-200">
-              ✨ Recently updated: {recentlyUpdated.size}
+            <div className="filter-pill bg-blue-100 text-blue-700 border-blue-200">
+              Recently updated: {recentlyUpdated.size}
             </div>
           )}
         </div>
@@ -684,12 +991,38 @@ export default function ProductsPage({ data }: Props) {
         <div className="neo-card p-3">
           <h4 className="font-medium">Filters</h4>
           <div className="mt-2 space-y-2">
-            <div className="flex gap-2 flex-wrap">
-              <button className={`px-3 py-1 ${filter.platform === 'shopee' ? 'neo-btn primary' : 'neo-btn'}`} onClick={() => { setFilter({ ...filter, platform: filter.platform === 'shopee' ? undefined : 'shopee' }); setCurrentPage(1) }}>Shopee</button>
-              <button className={`px-3 py-1 ${filter.platform === 'tiktok' ? 'neo-btn primary' : 'neo-btn'}`} onClick={() => { setFilter({ ...filter, platform: filter.platform === 'tiktok' ? undefined : 'tiktok' }); setCurrentPage(1) }}>TikTok</button>
-              <button className={`px-3 py-1 ${filter.platform === 'tiki' ? 'neo-btn primary' : 'neo-btn'}`} onClick={() => { setFilter({ ...filter, platform: filter.platform === 'tiki' ? undefined : 'tiki' }); setCurrentPage(1) }}>Tiki</button>
-              <button className={`px-3 py-1 ${filter.platform === 'lazada' ? 'neo-btn primary' : 'neo-btn'}`} onClick={() => { setFilter({ ...filter, platform: filter.platform === 'lazada' ? undefined : 'lazada' }); setCurrentPage(1) }}>Lazada</button>
-              <button className={`px-3 py-1 ${filter.platform === 'dmx' ? 'neo-btn primary' : 'neo-btn'}`} onClick={() => { setFilter({ ...filter, platform: filter.platform === 'dmx' ? undefined : 'dmx' }); setCurrentPage(1) }}>DMX</button>
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-700">Platform Filters:</div>
+              <div className="flex gap-2 flex-wrap">
+                <button className={`px-3 py-1 ${filter.platform === 'shopee' ? 'neo-btn primary' : 'neo-btn'}`} onClick={() => { setFilter({ ...filter, platform: filter.platform === 'shopee' ? undefined : 'shopee' }); setCurrentPage(1) }}>Shopee</button>
+                <button className={`px-3 py-1 ${filter.platform === 'tiktok' ? 'neo-btn primary' : 'neo-btn'}`} onClick={() => { setFilter({ ...filter, platform: filter.platform === 'tiktok' ? undefined : 'tiktok' }); setCurrentPage(1) }}>TikTok</button>
+                <button className={`px-3 py-1 ${filter.platform === 'tiki' ? 'neo-btn primary' : 'neo-btn'}`} onClick={() => { setFilter({ ...filter, platform: filter.platform === 'tiki' ? undefined : 'tiki' }); setCurrentPage(1) }}>Tiki</button>
+                <button className={`px-3 py-1 ${filter.platform === 'lazada' ? 'neo-btn primary' : 'neo-btn'}`} onClick={() => { setFilter({ ...filter, platform: filter.platform === 'lazada' ? undefined : 'lazada' }); setCurrentPage(1) }}>Lazada</button>
+                <button className={`px-3 py-1 ${filter.platform === 'dmx' ? 'neo-btn primary' : 'neo-btn'}`} onClick={() => { setFilter({ ...filter, platform: filter.platform === 'dmx' ? undefined : 'dmx' }); setCurrentPage(1) }}>DMX</button>
+              </div>
+
+              <div className="text-sm font-medium text-gray-700">Stock Status Filters:</div>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  className={`px-3 py-1 ${filter.stockStatus === 'instock' ? 'bg-green-600 text-white' : 'bg-green-100 text-green-700 border border-green-300 hover:bg-green-200'}`}
+                  onClick={() => {
+                    setFilter({ ...filter, stockStatus: filter.stockStatus === 'instock' ? undefined : 'instock' });
+                    setCurrentPage(1)
+                  }}
+                >
+                  Còn hàng ({platforms.instock})
+                </button>
+                <button
+                  className={`px-3 py-1 ${filter.stockStatus === 'outofstock' ? 'bg-red-600 text-white' : 'bg-red-100 text-red-700 border border-red-300 hover:bg-red-200'}`}
+                  onClick={() => {
+                    setFilter({ ...filter, stockStatus: filter.stockStatus === 'outofstock' ? undefined : 'outofstock' });
+                    setCurrentPage(1)
+                  }}
+                >
+                  Hết hàng ({platforms.outofstock})
+                </button>
+              </div>
+
             </div>
             <div className="space-y-2">
               <div className="text-sm font-medium text-gray-700">Time Filters:</div>
@@ -753,22 +1086,46 @@ export default function ProductsPage({ data }: Props) {
             </div>
           </div>
           <button className="neo-btn" onClick={() => fetchFromDb()} disabled={loadingDb}>
-            {loadingDb ? 'Loading...' : 'Refresh from DB'}
+            {loadingDb ? (
+              <span className="flex items-center gap-2">
+                <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                Loading Complete Data...
+              </span>
+            ) : (
+              <span className="flex items-center gap-1">
+                🔄 Refresh All Data from DB
+              </span>
+            )}
           </button>
         </div>
         
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {dbStatus && (
-            <div className={`px-2 py-1 rounded text-sm ${dbStatus.includes('error') ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}`}>
+            <div className={`px-3 py-2 rounded text-sm font-medium ${
+              dbStatus.includes('❌') || dbStatus.includes('error')
+                ? 'bg-red-100 text-red-800 border border-red-200'
+                : dbStatus.includes('⚠️') && dbStatus.includes('fallback')
+                ? 'bg-yellow-100 text-yellow-800 border border-yellow-200'
+                : dbStatus.includes('🔄') || dbStatus.includes('🔗') || dbStatus.includes('📊')
+                ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                : 'bg-green-100 text-green-800 border border-green-200'
+            }`}>
               {dbStatus}
             </div>
           )}
           {!dbRows && !loadingDb && !dbStatus && (
-            <div className="muted">Click "Refresh from DB" to load data</div>
+            <div className="px-3 py-2 bg-gray-100 text-gray-600 rounded text-sm border">
+              💡 Click "🔄 Refresh All Data from DB" to load complete product data
+            </div>
+          )}
+          {dbRows && dbRows.length > 0 && !loadingDb && (
+            <div className="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-xs border border-indigo-200">
+              📊 Dataset: {dbRows.length} products loaded with full details
+            </div>
           )}
           {searchQuery && (
-            <div className="px-2 py-1 bg-blue-50 text-blue-700 rounded text-sm">
-              🔍 Searching: "{searchQuery}" ({filteredRows.length} found)
+            <div className="px-2 py-1 bg-blue-50 text-blue-700 rounded text-sm border border-blue-200">
+              🔍 Searching: "{searchQuery}" ({filteredRows.length} results)
             </div>
           )}
         </div>
@@ -813,8 +1170,7 @@ export default function ProductsPage({ data }: Props) {
       </div>
 
       {/* Main content: table and edit panel side by side */}
-      <div className="flex gap-4">
-        <div className={`transition-all duration-300 ${selectedProduct ? 'flex-1' : 'w-full'}`}>
+      <div className="w-full">
           <div className="overflow-auto">
             <table className="table-neo w-full text-sm">
               <thead>
@@ -854,8 +1210,6 @@ export default function ProductsPage({ data }: Props) {
                   </tr>
                 ) : (
                   rows.map((r, i) => {
-                console.log(`Row ${i}:`, r)
-                console.log(`Available keys:`, Object.keys(r || {}))
                 const isRecentlyUpdated = recentlyUpdated.has(String(r?.id))
                 const isCurrentlyEditing = selectedProduct && String(selectedProduct.id) === String(r?.id)
                 const isSyncing = syncingProducts.has(String(r?.id))
@@ -871,9 +1225,10 @@ export default function ProductsPage({ data }: Props) {
                 }
                 
                 return (
-                  <tr key={r?.id ?? (currentPage - 1) * pageSize + i + 1} className={rowClasses}>
-                    <td className="p-2 relative">
-                      {(currentPage - 1) * pageSize + i + 1}
+                  <React.Fragment key={r?.id ?? (currentPage - 1) * pageSize + i + 1}>
+                    <tr className={rowClasses}>
+                      <td className="p-2 relative">
+                        {(currentPage - 1) * pageSize + i + 1}
                       {isCurrentlyEditing && (
                         <div className="absolute -top-1 -right-1">
                           <span className="inline-flex items-center px-1 py-0.5 rounded-full text-xs bg-blue-500 text-white">
@@ -892,58 +1247,128 @@ export default function ProductsPage({ data }: Props) {
                     {visibleFields.map((f) => (
                       <td key={f} className={`p-2 ${['shopee', 'tiktok', 'lazada', 'dmx', 'tiki'].includes(f) ? 'min-w-32' : ''}`}>
                         {(() => {
-                          console.log(`Looking for field "${f}" in row:`, r)
                           
                           // Handle combined brand columns (shopee, tiktok, lazada, dmx, tiki)
                           if (['shopee', 'tiktok', 'lazada', 'dmx', 'tiki'].includes(f)) {
-                            const linkField = `link_${f}` 
+                            const linkField = `link_${f}`
                             const priceField = `gia_${f}`
                             const link = r?.[linkField] || ''
                             const price = r?.[priceField] || 0
-                            
-                            
-                            if (!link && !price) {
-                              return <span className="text-gray-400 text-xs">-</span>
+
+                            // Platform-specific styling
+                            const platformConfig = {
+                              'shopee': { icon: '🛒', color: 'text-orange-600', bg: 'bg-orange-50', name: 'Shopee' },
+                              'tiktok': { icon: '📱', color: 'text-black', bg: 'bg-gray-50', name: 'TikTok' },
+                              'tiki': { icon: '🛍️', color: 'text-purple-600', bg: 'bg-purple-50', name: 'Tiki' },
+                              'lazada': { icon: '🏪', color: 'text-blue-600', bg: 'bg-blue-50', name: 'Lazada' },
+                              'dmx': { icon: '🔌', color: 'text-green-600', bg: 'bg-green-50', name: 'DMX' }
                             }
-                            
+
+                            const config = platformConfig[f] || { icon: '🔗', color: 'text-blue-600', bg: 'bg-blue-50', name: f.toUpperCase() }
+
+                            if (!link && !price) {
+                              return (
+                                <div className="text-xs space-y-1 min-w-0">
+                                  <span className="text-gray-400 text-xs">-</span>
+                                </div>
+                              )
+                            }
+
                             return (
                               <div className="text-xs space-y-1 min-w-0">
                                 {link && (
                                   <div className="truncate">
-                                    <a 
-                                      className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline" 
-                                      href={link} 
-                                      target="_blank" 
+                                    <a
+                                      className={`inline-flex items-center gap-1 ${config.color} hover:opacity-80 hover:underline transition-all`}
+                                      href={link}
+                                      target="_blank"
                                       rel="noreferrer"
-                                      title={link}
+                                      title={`${config.name}: ${link}`}
                                     >
-                                      🔗 <span className="truncate text-xs">
-                                        {f === 'dmx' ? 'DMX' : f === 'tiki' ? 'Tiki' : f.charAt(0).toUpperCase() + f.slice(1)}
+                                      <span className="text-sm">{config.icon}</span>
+                                      <span className="truncate text-xs font-medium">
+                                        {config.name}
                                       </span>
                                     </a>
                                   </div>
                                 )}
                                 {price > 0 && (
-                                  <div className="text-green-700 font-semibold bg-green-50 px-1 py-0.5 rounded text-center text-xs">
-                                    {new Intl.NumberFormat('vi-VN', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(price)}₫
+                                  <div className={`font-semibold ${config.bg} px-2 py-0.5 rounded text-center text-xs border`}>
+                                    <div className={`${config.color} font-bold`}>
+                                      {new Intl.NumberFormat('vi-VN', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(price)}₫
+                                    </div>
+                                  </div>
+                                )}
+                                {link && !price && (
+                                  <div className="text-yellow-600 text-xs italic bg-yellow-50 px-1 py-0.5 rounded">
+                                    Thiếu giá
+                                  </div>
+                                )}
+                                {!link && price > 0 && (
+                                  <div className="text-orange-600 text-xs italic bg-orange-50 px-1 py-0.5 rounded">
+                                    Thiếu link
                                   </div>
                                 )}
                               </div>
                             )
                           }
 
-                          // Handle title field (add product link)
+                          // Handle title field (add product link and platform info)
                           if (f === 'title') {
                             const productUrl = r?.website_id ? `https://locknlockvietnam.com/shop/?p=${r.website_id}` : null
+
+                            // Analyze sync status for platform data
+                            const platformData = [
+                              { link: r?.link_shopee, price: r?.gia_shopee },
+                              { link: r?.link_tiktok, price: r?.gia_tiktok },
+                              { link: r?.link_tiki, price: r?.gia_tiki },
+                              { link: r?.link_lazada, price: r?.gia_lazada },
+                              { link: r?.link_dmx, price: r?.gia_dmx }
+                            ]
+
+                            let platformCount = 0
+                            let priceCount = 0
+                            let linkMismatch = false
+
+                            platformData.forEach(({ link, price }) => {
+                              const hasValidLink = link && link.trim() && link.length > 10
+                              const hasValidPrice = price && price > 0
+
+                              if (hasValidLink) {
+                                platformCount++
+                                if (!hasValidPrice) {
+                                  linkMismatch = true
+                                }
+                              }
+                              if (hasValidPrice) {
+                                priceCount++
+                              }
+                            })
+
+                            // Determine sync status
+                            let syncStatus = ''
+                            let syncColor = ''
+                            if (platformCount === 0) {
+                              syncStatus = '❌ Chưa đồng bộ'
+                              syncColor = 'text-red-600 bg-red-50'
+                            } else if (linkMismatch || platformCount !== priceCount) {
+                              syncStatus = '⚠️ Thiếu dữ liệu'
+                              syncColor = 'text-yellow-600 bg-yellow-50'
+                            } else if (platformCount > 0 && platformCount === priceCount) {
+                              syncStatus = '✅ Hoàn chỉnh'
+                              syncColor = 'text-green-600 bg-green-50'
+                            }
+
                             return (
                               <div className="space-y-1">
                                 <div className="font-medium">
                                   {productUrl ? (
-                                    <a 
-                                      href={productUrl} 
-                                      target="_blank" 
+                                    <a
+                                      href={productUrl}
+                                      target="_blank"
                                       rel="noopener noreferrer"
                                       className="text-blue-600 hover:text-blue-800 hover:underline"
+                                      title={`Xem sản phẩm trên website: ${r?.title}`}
                                     >
                                       {r?.title || 'Untitled'}
                                     </a>
@@ -951,8 +1376,12 @@ export default function ProductsPage({ data }: Props) {
                                     <span>{r?.title || 'Untitled'}</span>
                                   )}
                                 </div>
-                                <div className="text-xs text-gray-500">
-                                  ID: {r?.website_id || 'N/A'}
+                                <div className="flex items-center justify-between text-xs gap-2">
+                                  <span className="text-gray-500">
+                                    ID: {r?.website_id || 'N/A'}
+                                  </span>
+                                  <div className="flex items-center gap-1">
+                                  </div>
                                 </div>
                                 {/* Last updated info */}
                                 {r?.updated_at && (
@@ -966,6 +1395,26 @@ export default function ProductsPage({ data }: Props) {
                                     })()}
                                   </div>
                                 )}
+                                {/* Stock status under product title */}
+                                <div className="mt-1">
+                                  {(() => {
+                                    const hetHangValue = r?.het_hang
+                                    const { isOutOfStock, isInStock } = getStockStatus(hetHangValue)
+
+
+                                    return (
+                                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                        isOutOfStock
+                                          ? 'bg-red-100 text-red-700'
+                                          : isInStock
+                                          ? 'bg-green-100 text-green-700'
+                                          : 'bg-gray-100 text-gray-600'
+                                      }`}>
+                                        {isOutOfStock ? 'Hết hàng' : isInStock ? 'Còn hàng' : 'Chưa set'}
+                                      </span>
+                                    )
+                                  })()}
+                                </div>
                                 {/* Update status under product title */}
                                 {isCurrentlyEditing && (
                                   <div className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-blue-500 text-white mt-1">
@@ -986,12 +1435,12 @@ export default function ProductsPage({ data }: Props) {
                           if (f === 'image_url') {
                             const imageUrl = r?.image_url
                             if (!imageUrl) return <span className="text-gray-400 text-xs">-</span>
-                            
+
                             return (
                               <div className="flex items-center justify-center">
-                                <img 
-                                  src={imageUrl} 
-                                  alt={r?.title || 'Product image'} 
+                                <img
+                                  src={imageUrl}
+                                  alt={r?.title || 'Product image'}
                                   className="w-12 h-12 object-cover rounded border"
                                   onError={(e) => {
                                     (e.target as HTMLImageElement).style.display = 'none'
@@ -1002,10 +1451,10 @@ export default function ProductsPage({ data }: Props) {
                               </div>
                             )
                           }
+
                           
                           // Handle regular fields
                           const value = r?.[f]
-                          console.log(`Field "${f}" value:`, value)
                           
                           if (f === 'price' && value > 0) {
                             return (
@@ -1037,7 +1486,8 @@ export default function ProductsPage({ data }: Props) {
                               </a>
                             )
                           }
-                          
+
+
                           return value != null ? String(value) : (<span className="muted">-</span>)
                         })()}
                       </td>
@@ -1075,171 +1525,166 @@ export default function ProductsPage({ data }: Props) {
                       </div>
                     </td>
                   </tr>
+
+                  {/* Inline Edit Form - appears directly under the product row */}
+                  {isCurrentlyEditing && editedProduct && (
+                    <tr className="bg-blue-50 border-b-2 border-blue-200">
+                      <td colSpan={visibleFields.length + 2} className="p-0">
+                        <div className="animate-slideDown">
+                          <div className="p-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-400">
+                            {/* Header */}
+                            <div className="flex items-center justify-between mb-4">
+                              <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                                <span className="text-blue-600">📝</span> Edit Product
+                              </h3>
+                              <div className="flex gap-2">
+                                <button
+                                  className={`neo-btn transition-all ${hasChanges() ? 'primary shadow-lg' : 'bg-gray-200'}`}
+                                  onClick={updateProduct}
+                                  disabled={!hasChanges() || isUpdating}
+                                >
+                                  {isUpdating ? (
+                                    <span className="flex items-center gap-1">
+                                      <span className="animate-spin">⏳</span> Updating DB & WooCommerce
+                                    </span>
+                                  ) : hasChanges() ? (
+                                    <span className="flex items-center gap-1">
+                                      💾 Update All
+                                    </span>
+                                  ) : (
+                                    'Lưu'
+                                  )}
+                                </button>
+                                <button
+                                  className="neo-btn text-sm"
+                                  onClick={closeEditSidebar}
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Status and Auto-update Summary */}
+                            <div className="mb-4 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span>SKU: {editedProduct?.sku || 'N/A'}</span>
+                                <span>ID: {editedProduct?.id || 'N/A'}</span>
+                              </div>
+                              {recentlyUpdated.has(String(editedProduct?.id)) && (
+                                <div className="text-green-600 font-medium text-sm">
+                                  ✨ Recently updated
+                                </div>
+                              )}
+
+                              {priceAutoUpdated && autoUpdateSummary && (
+                                <div className="bg-yellow-100 border border-yellow-300 rounded p-2 text-sm">
+                                  <span className="font-medium text-yellow-800">🔄 Auto-update applied: </span>
+                                  <span className="text-yellow-700">{autoUpdateSummary}</span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Form Fields - Grid Layout */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                              {ALL_FIELDS.map((field) => (
+                                <div key={field} className={`p-3 rounded-lg border transition-all ${isFieldChanged(field) ? 'bg-yellow-50 border-yellow-300 shadow-sm' : 'bg-white border-gray-200'}`}>
+                                  <label className={`block text-sm font-medium mb-2 capitalize ${isFieldChanged(field) ? 'text-yellow-800' : 'text-gray-700'}`}>
+                                    <span className="flex items-center gap-2">
+                                      {field.replace('_', ' ')}
+                                      {isFieldChanged(field) && <span className="text-yellow-600">●</span>}
+                                    </span>
+                                  </label>
+
+                                  {/* Platform fields (shopee, tiktok, etc.) with link and price inputs */}
+                                  {['shopee', 'tiktok', 'lazada', 'dmx', 'tiki'].includes(field) ? (
+                                    <div className="space-y-2">
+                                      <input
+                                        type="url"
+                                        className="w-full p-2 border rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                        value={editedProduct[`link_${field}`] || ''}
+                                        onChange={(e) => handleFieldChange(`link_${field}`, e.target.value)}
+                                        placeholder="https://..."
+                                      />
+                                      <input
+                                        type="number"
+                                        className="w-full p-2 border rounded text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
+                                        value={editedProduct[`gia_${field}`] || ''}
+                                        onChange={(e) => handleFieldChange(`gia_${field}`, parseInt(e.target.value) || 0)}
+                                        placeholder="0"
+                                      />
+                                    </div>
+                                  ) : field === 'description' ? (
+                                    <textarea
+                                      className="w-full p-2 border rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all resize-none"
+                                      rows={3}
+                                      value={editedProduct[field] || ''}
+                                      onChange={(e) => handleFieldChange(field, e.target.value)}
+                                      placeholder="Product description..."
+                                    />
+                                  ) : ['price', 'promotional_price'].includes(field) ? (
+                                    <input
+                                      type="number"
+                                      className="w-full p-2 border rounded focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
+                                      value={editedProduct[field] || ''}
+                                      onChange={(e) => handleFieldChange(field, parseInt(e.target.value) || 0)}
+                                      placeholder="0"
+                                    />
+                                  ) : (
+                                    <input
+                                      type="text"
+                                      className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                      value={editedProduct[field] || ''}
+                                      onChange={(e) => handleFieldChange(field, e.target.value)}
+                                      placeholder={`Enter ${field.replace('_', ' ')}`}
+                                    />
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Additional fields that might exist in the database */}
+                            {editedProduct && Object.keys(editedProduct).filter(key =>
+                              !ALL_FIELDS.includes(key) &&
+                              !['id', 'created_at', 'updated_at', 'raw', 'meta'].includes(key) &&
+                              !PLATFORM_FIELDS.includes(key) // Exclude all platform fields
+                            ).length > 0 && (
+                              <div className="mt-6">
+                                <h4 className="text-sm font-medium text-gray-700 mb-3">Additional Fields</h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                  {Object.keys(editedProduct).filter(key =>
+                                    !ALL_FIELDS.includes(key) &&
+                                    !['id', 'created_at', 'updated_at', 'raw', 'meta'].includes(key) &&
+                                    !PLATFORM_FIELDS.includes(key) // Exclude all platform fields
+                                  ).map((field) => (
+                                    <div key={field} className="p-3 rounded-lg border bg-gray-50">
+                                      <label className="block text-sm font-medium text-gray-700 mb-2 capitalize">
+                                        {field.replace('_', ' ')}
+                                      </label>
+                                      <input
+                                        type="text"
+                                        className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                        value={editedProduct[field] || ''}
+                                        onChange={(e) => handleFieldChange(field, e.target.value)}
+                                        placeholder={`Enter ${field.replace('_', ' ')}`}
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 )
               })
             )}
           </tbody>
         </table>
       </div>
-        </div>
-
-        {/* Inline Edit Panel */}
-        {selectedProduct && (
-          <div className="w-96 bg-white border-l shadow-lg">
-            {/* Header */}
-            <div className="p-4 border-b bg-gradient-to-r from-blue-50 to-indigo-50">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-lg font-semibold text-gray-800">Edit Product</h3>
-                <div className="flex gap-2">
-                  <button 
-                    className={`neo-btn transition-all ${hasChanges() ? 'primary shadow-lg' : 'bg-gray-200'}`}
-                    onClick={updateProduct}
-                    disabled={!hasChanges() || isUpdating}
-                  >
-                    {isUpdating ? (
-                      <span className="flex items-center gap-1">
-                        <span className="animate-spin">⏳</span> Updating DB & WooCommerce
-                      </span>
-                    ) : hasChanges() ? (
-                      <span className="flex items-center gap-1">
-                        💾 Update All
-                      </span>
-                    ) : (
-                      '✅'
-                    )}
-                  </button>
-                  <button 
-                    className="neo-btn text-sm"
-                    onClick={closeEditSidebar}
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-              <div className={`text-xs transition-colors ${hasChanges() ? 'text-green-600 font-medium' : 'text-gray-500'}`}>
-                {hasChanges() ? '📝 Changes detected - ready to save!' : '✅ Up to date'}
-              </div>
-              
-              {/* Auto-update summary */}
-              {priceAutoUpdated && autoUpdateSummary && (
-                <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs">
-                  <div className="font-medium text-blue-800 mb-1">🤖 Tự động cập nhật giá:</div>
-                  <div className="text-blue-700 whitespace-pre-line">
-                    {autoUpdateSummary}
-                  </div>
-                </div>
-              )}
-              <div className="text-xs text-gray-600 mt-1">
-                <div className="flex items-center justify-between">
-                  <span>SKU: {editedProduct?.sku || 'N/A'}</span>
-                  <span>ID: {editedProduct?.id || 'N/A'}</span>
-                </div>
-                {recentlyUpdated.has(String(editedProduct?.id)) && (
-                  <div className="mt-1 text-green-600 font-medium text-xs">
-                    ✨ Recently updated
-                  </div>
-                )}
-              </div>
-            </div>
-            
-            {/* Scrollable Content */}
-            <div className="p-4 space-y-4 max-h-[calc(100vh-280px)] overflow-y-auto">
-              <div className="space-y-4">
-              {editedProduct && ALL_FIELDS.map((field) => (
-                <div key={field} className={`p-3 rounded-lg border transition-all ${isFieldChanged(field) ? 'bg-yellow-50 border-yellow-300 shadow-sm' : 'bg-gray-50 border-gray-200'}`}>
-                  <label className={`block text-sm font-medium mb-2 capitalize ${isFieldChanged(field) ? 'text-yellow-800' : 'text-gray-700'}`}>
-                    <span className="flex items-center gap-2">
-                      {field.replace('_', ' ')}
-                      {isFieldChanged(field) && <span className="text-xs bg-yellow-200 text-yellow-800 px-2 py-0.5 rounded-full">Modified</span>}
-                    </span>
-                  </label>
-                  
-                  {/* Handle platform fields (shopee, tiktok, tiki, lazada, dmx) */}
-                  {['shopee', 'tiktok', 'tiki', 'lazada', 'dmx'].includes(field) ? (
-                    <div className="space-y-2">
-                      <div>
-                        <label className="block text-xs text-gray-600 mb-1">Link</label>
-                        <input
-                          type="url"
-                          className="w-full p-2 border rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                          value={editedProduct[`link_${field}`] || ''}
-                          onChange={(e) => handleFieldChange(`link_${field}`, e.target.value)}
-                          placeholder="https://..."
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-600 mb-1">Price (₫)</label>
-                        <input
-                          type="number"
-                          step="1"
-                          className="w-full p-2 border rounded text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
-                          value={editedProduct[`gia_${field}`] || ''}
-                          onChange={(e) => handleFieldChange(`gia_${field}`, parseInt(e.target.value) || 0)}
-                          placeholder="0"
-                        />
-                      </div>
-                    </div>
-                  ) : field === 'description' ? (
-                    <textarea
-                      className="w-full p-2 border rounded resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                      rows={3}
-                      value={editedProduct[field] || ''}
-                      onChange={(e) => handleFieldChange(field, e.target.value)}
-                      placeholder="Product description..."
-                    />
-                  ) : field === 'price' ? (
-                    <div>
-                      <input
-                        type="number"
-                        step="1"
-                        className="w-full p-2 border rounded focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
-                        value={editedProduct[field] || ''}
-                        onChange={(e) => handleFieldChange(field, parseInt(e.target.value) || 0)}
-                        placeholder="0"
-                      />
-                      <div className={`text-xs mt-1 transition-colors ${priceAutoUpdated ? 'text-green-600 font-medium' : 'text-gray-500'}`}>
-                        {priceAutoUpdated ? '✅ Price auto-updated!' : '💡 Auto-updates to minimum platform price'}
-                      </div>
-                    </div>
-                  ) : (
-                    <input
-                      type="text"
-                      className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                      value={editedProduct[field] || ''}
-                      onChange={(e) => handleFieldChange(field, e.target.value)}
-                      placeholder={`Enter ${field.replace('_', ' ')}`}
-                    />
-                  )}
-                </div>
-              ))}
-              
-              {/* Additional fields that might exist in the database */}
-              {editedProduct && Object.keys(editedProduct).filter(key => 
-                !ALL_FIELDS.includes(key) && 
-                !['id', 'created_at', 'updated_at', 'raw', 'meta'].includes(key) &&
-                !PLATFORM_FIELDS.includes(key) // Exclude all platform fields
-              ).map((field) => (
-                <div key={field} className={`p-3 rounded-lg border transition-all ${isFieldChanged(field) ? 'bg-yellow-50 border-yellow-300 shadow-sm' : 'bg-gray-50 border-gray-200'}`}>
-                  <label className={`block text-sm font-medium mb-2 capitalize ${isFieldChanged(field) ? 'text-yellow-800' : 'text-gray-700'}`}>
-                    <span className="flex items-center gap-2">
-                      {field.replace('_', ' ')}
-                      {isFieldChanged(field) && <span className="text-xs bg-yellow-200 text-yellow-800 px-2 py-0.5 rounded-full">Modified</span>}
-                    </span>
-                  </label>
-                  <input
-                    type="text"
-                    className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                    value={editedProduct[field] || ''}
-                    onChange={(e) => handleFieldChange(field, e.target.value)}
-                    placeholder={`Enter ${field.replace('_', ' ')}`}
-                  />
-                </div>
-              ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
     </div>
+  </div>
   )
 }

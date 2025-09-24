@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WooCommerce Sync Debug Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .button {
+            background: #007cba;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .button:hover {
+            background: #005a87;
+        }
+        .output {
+            background: #f8f8f8;
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .warning { background: #fff3cd; color: #856404; }
+        .info { background: #d1ecf1; color: #0c5460; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 WooCommerce Sync Debug Test</h1>
+
+        <div class="status info">
+            <strong>Instructions:</strong>
+            <ol>
+                <li>Make sure your main app is running at http://localhost:5173 or 5174</li>
+                <li>Open this page in the same browser</li>
+                <li>Click buttons below to test debug functionality</li>
+                <li>Check both the output here and browser console (F12)</li>
+            </ol>
+        </div>
+
+        <div>
+            <button class="button" onclick="testEnvironment()">🌍 Test Environment</button>
+            <button class="button" onclick="testWooCommerce()">🛒 Test WooCommerce</button>
+            <button class="button" onclick="testSupabase()">💾 Test Supabase</button>
+            <button class="button" onclick="runQuickHealth()">🏥 Quick Health Check</button>
+            <button class="button" onclick="runFullDebug()">🛠️ Full Debug</button>
+            <button class="button" onclick="clearOutput()">🗑️ Clear</button>
+        </div>
+
+        <div id="output" class="output">Ready to test debug functionality...\n</div>
+    </div>
+
+    <script>
+        function log(message) {
+            const output = document.getElementById('output');
+            output.textContent += new Date().toLocaleTimeString() + ': ' + message + '\n';
+            output.scrollTop = output.scrollHeight;
+            console.log(message);
+        }
+
+        function clearOutput() {
+            document.getElementById('output').textContent = 'Output cleared...\n';
+        }
+
+        function testEnvironment() {
+            log('🌍 Testing Environment Variables...');
+
+            // Test if we can access environment through our app
+            try {
+                // These would come from your app's ENV object
+                const requiredVars = [
+                    'VITE_SUPABASE_URL',
+                    'VITE_SUPABASE_ANON_KEY',
+                    'VITE_WOOCOMMERCE_BASE_URL',
+                    'VITE_WOOCOMMERCE_CONSUMER_KEY',
+                    'VITE_WOOCOMMERCE_CONSUMER_SECRET'
+                ];
+
+                log('Environment variables to check: ' + requiredVars.join(', '));
+                log('⚠️ Note: Actual values should be checked in your main app');
+                log('✅ Environment test structure ready');
+
+            } catch (error) {
+                log('❌ Environment test failed: ' + error.message);
+            }
+        }
+
+        async function testWooCommerce() {
+            log('🛒 Testing WooCommerce Connection...');
+
+            try {
+                // This would test the actual WooCommerce API
+                log('📝 WooCommerce test would check:');
+                log('  - API endpoint accessibility');
+                log('  - Authentication with consumer key/secret');
+                log('  - Product fetch capability');
+                log('  - Response time measurement');
+                log('⚠️ Note: Actual API test should run in main app context');
+                log('✅ WooCommerce test structure ready');
+
+            } catch (error) {
+                log('❌ WooCommerce test failed: ' + error.message);
+            }
+        }
+
+        async function testSupabase() {
+            log('💾 Testing Supabase Connection...');
+
+            try {
+                log('📝 Supabase test would check:');
+                log('  - Database connection');
+                log('  - Table accessibility');
+                log('  - Insert/update permissions');
+                log('  - Query performance');
+                log('⚠️ Note: Actual database test should run in main app context');
+                log('✅ Supabase test structure ready');
+
+            } catch (error) {
+                log('❌ Supabase test failed: ' + error.message);
+            }
+        }
+
+        async function runQuickHealth() {
+            log('🏥 Running Quick Health Check...');
+
+            try {
+                // Simulate health check
+                log('Checking critical components...');
+
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
+                const mockHealth = {
+                    environment: true,
+                    woocommerce: true,
+                    supabase: true
+                };
+
+                log('Health Check Results:');
+                log('  Environment: ' + (mockHealth.environment ? '✅ OK' : '❌ Failed'));
+                log('  WooCommerce: ' + (mockHealth.woocommerce ? '✅ OK' : '❌ Failed'));
+                log('  Supabase: ' + (mockHealth.supabase ? '✅ OK' : '❌ Failed'));
+
+                const allHealthy = Object.values(mockHealth).every(v => v);
+                log(allHealthy ? '✅ System Healthy' : '❌ Issues Detected');
+
+            } catch (error) {
+                log('❌ Health check failed: ' + error.message);
+            }
+        }
+
+        async function runFullDebug() {
+            log('🛠️ Running Full Debug Diagnostic...');
+
+            try {
+                log('Starting comprehensive diagnostic...');
+
+                // Simulate diagnostic steps
+                const steps = [
+                    '🌍 Environment Configuration',
+                    '🛒 WooCommerce Connection',
+                    '💾 Supabase Connection',
+                    '🔄 Data Mapping',
+                    '🔗 Platform Link Detection',
+                    '💰 Price Formatting'
+                ];
+
+                for (let i = 0; i < steps.length; i++) {
+                    log(`STEP ${i + 1}: ${steps[i]}...`);
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    log(`   ✅ ${steps[i]} completed`);
+                }
+
+                log('');
+                log('🎯 DIAGNOSTIC COMPLETE');
+                log('Overall Status: ✅ HEALTHY (Simulated)');
+                log('Total Issues: 0');
+                log('Errors: 0');
+                log('Warnings: 0');
+                log('');
+                log('💡 Next Steps:');
+                log('  • Run actual debug in main app');
+                log('  • Check console for detailed logs');
+                log('  • Test sync functionality');
+
+            } catch (error) {
+                log('❌ Full debug failed: ' + error.message);
+            }
+        }
+
+        // Test if running in main app context
+        window.addEventListener('load', function() {
+            log('🔧 Debug Test Page Loaded');
+            log('Checking for main app context...');
+
+            if (typeof window.productSync !== 'undefined') {
+                log('✅ Main app detected - productSync tools available');
+                log('Available commands: ' + Object.keys(window.productSync).join(', '));
+            } else {
+                log('⚠️ Main app not detected - running in isolated mode');
+                log('💡 Open your main app (localhost:5173/5174) to test actual functionality');
+            }
+        });
+    </script>
+</body>
+</html>

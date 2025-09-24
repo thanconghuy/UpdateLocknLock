@@ -3,6 +3,8 @@ import ImportPage from './components/ImportPage'
 import ProductsPage from './components/ProductsPage'
 import UpdateLogsPage from './components/UpdateLogsPage'
 import SupabaseConnector from './components/SupabaseConnector'
+import ProductManagementCenter from './components/ProductManagementCenter'
+import WooCommerceConnectionTest from './components/WooCommerceConnectionTest'
 import { CSVRow, ProductData } from './types'
 import { smartMapCSVData } from './utils/smartCSVMapper'
 
@@ -10,10 +12,27 @@ export default function App() {
   const [rows, setRows] = useState<ProductData[]>([])
   const [errors, setErrors] = useState<any[]>([])
   const [route, setRoute] = useState<'import'|'products'|'logs'>('products')
+  const [refreshKey, setRefreshKey] = useState(0)
 
   function handleFileLoad(data: CSVRow[]) {
     const mapped = smartMapCSVData(data)
     setRows(mapped)
+  }
+
+  function handleSyncComplete() {
+    console.log('🔄 handleSyncComplete() called - incrementing refreshKey from', refreshKey)
+    setRefreshKey(prev => {
+      console.log('🔄 refreshKey updated from', prev, 'to', prev + 1)
+      return prev + 1
+    })
+  }
+
+  function handleReloadProducts() {
+    console.log('🔄 handleReloadProducts() called - incrementing refreshKey from', refreshKey)
+    setRefreshKey(prev => {
+      console.log('🔄 refreshKey updated from', prev, 'to', prev + 1)
+      return prev + 1
+    })
   }
 
   return (
@@ -33,12 +52,17 @@ export default function App() {
         {route === 'import' ? (
           <ImportPage rows={rows} setRows={setRows} errors={errors} setErrors={setErrors} />
         ) : route === 'products' ? (
-          <ProductsPage data={rows} />
+          <ProductsPage key={refreshKey} data={rows} refreshKey={refreshKey} />
         ) : (
           <UpdateLogsPage />
         )}
 
-        <div className="mt-6">
+        <div className="mt-6 space-y-4">
+          {/* <WooCommerceConnectionTest /> */}
+          <ProductManagementCenter
+            onSyncComplete={handleSyncComplete}
+            onReloadProducts={handleReloadProducts}
+          />
           <SupabaseConnector onConnect={() => {}} data={rows} />
         </div>
       </main>

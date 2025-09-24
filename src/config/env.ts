@@ -1,4 +1,14 @@
-export const ENV = {
+interface EnvConfig {
+  SUPABASE_URL: string;
+  SUPABASE_ANON_KEY: string;
+  WOOCOMMERCE_BASE_URL: string;
+  WOOCOMMERCE_CONSUMER_KEY: string;
+  WOOCOMMERCE_CONSUMER_SECRET: string;
+  DEFAULT_PRODUCTS_TABLE: string;
+  DEFAULT_AUDIT_TABLE: string;
+}
+
+export const ENV: EnvConfig = {
   SUPABASE_URL: import.meta.env.VITE_SUPABASE_URL || '',
   SUPABASE_ANON_KEY: import.meta.env.VITE_SUPABASE_ANON_KEY || '',
   WOOCOMMERCE_BASE_URL: import.meta.env.VITE_WOOCOMMERCE_BASE_URL || 'https://locknlockvietnam.com',
@@ -8,15 +18,32 @@ export const ENV = {
   DEFAULT_AUDIT_TABLE: import.meta.env.VITE_DEFAULT_AUDIT_TABLE || 'product_updates'
 }
 
-export const isProductionMode = () => {
-  return import.meta.env.PROD
+export const isProductionMode = (): boolean => {
+  return import.meta.env.PROD === true;
 }
 
-export const hasRequiredEnvVars = () => {
-  return Boolean(
-    ENV.SUPABASE_URL &&
-    ENV.SUPABASE_ANON_KEY &&
-    ENV.WOOCOMMERCE_CONSUMER_KEY &&
-    ENV.WOOCOMMERCE_CONSUMER_SECRET
-  )
+export const validateEnv = (): void => {
+  const requiredVars = [
+    'SUPABASE_URL',
+    'SUPABASE_ANON_KEY',
+    'WOOCOMMERCE_CONSUMER_KEY',
+    'WOOCOMMERCE_CONSUMER_SECRET'
+  ] as const;
+
+  const missingVars = requiredVars.filter(key => !ENV[key]);
+
+  if (missingVars.length > 0) {
+    throw new Error(
+      `Missing required environment variables: ${missingVars.join(', ')}`
+    );
+  }
+}
+
+export const hasRequiredEnvVars = (): boolean => {
+  try {
+    validateEnv();
+    return true;
+  } catch {
+    return false;
+  }
 }

@@ -1,0 +1,1228 @@
+import { createClient } from '@supabase/supabase-js'
+import { wooCommerceService } from '../services/woocommerce'
+import { ENV, hasRequiredEnvVars } from '../config/env'
+import { detectPlatformLinks } from './links'
+import { parsePriceText } from './priceUtils'
+import type { ProductData } from '../types'
+
+export interface SyncReport {
+  toolProducts: number
+  wooProducts: number
+  missingProducts: number
+  newlyAdded: number
+  errors: string[]
+  missingProductsList: ProductData[]
+}
+
+export class ProductSyncChecker {
+  private supabase = hasRequiredEnvVars()
+    ? createClient(ENV.SUPABASE_URL, ENV.SUPABASE_ANON_KEY)
+    : null
+
+  async checkAndSyncMissingProducts(): Promise<SyncReport> {
+    const report: SyncReport = {
+      toolProducts: 0,
+      wooProducts: 0,
+      missingProducts: 0,
+      newlyAdded: 0,
+      errors: [],
+      missingProductsList: []
+    }
+
+    try {
+      if (!this.supabase) {
+        throw new Error('❌ Database not configured. Please check your environment variables.')
+      }
+
+      console.log('🚀 Starting comprehensive product sync process...')
+      console.log('=' .repeat(60))
+
+      // Step 1: Get current products in tool database
+      console.log('📊 STEP 1: Analyzing current tool database...')
+      const toolProducts = await this.getToolProducts()
+      report.toolProducts = toolProducts.length
+      console.log(`✅ Tool database contains: ${toolProducts.length} products`)
+
+      // Step 2: Get all products from WooCommerce website
+      console.log('\n🛒 STEP 2: Fetching products from WooCommerce website...')
+      const wooProducts = await this.getAllWooCommerceProducts()
+      report.wooProducts = wooProducts.length
+      console.log(`✅ WooCommerce website has: ${wooProducts.length} products`)
+
+      // Step 3: Identify missing products with detailed analysis
+      console.log('\n🔍 STEP 3: Analyzing differences between website and tool...')
+      const missingProducts = await this.findMissingProducts(toolProducts, wooProducts)
+      report.missingProducts = missingProducts.length
+      report.missingProductsList = missingProducts
+
+      // Show detailed analysis
+      if (missingProducts.length === 0) {
+        console.log('🎉 ANALYSIS COMPLETE: All products are perfectly synced!')
+        console.log('   ✅ No missing products found')
+        console.log('   ✅ Tool database is up to date with website')
+        return report
+      }
+
+      // Show missing products details
+      console.log(`🔍 FOUND: ${missingProducts.length} products missing from tool database`)
+      console.log('\n📋 MISSING PRODUCTS LIST:')
+      console.log('-'.repeat(80))
+
+      missingProducts.forEach((product, index) => {
+        console.log(`${(index + 1).toString().padStart(3, ' ')}. [ID: ${product.websiteId}] ${product.title}`)
+        console.log(`     💰 Price: ${product.price.toLocaleString('vi-VN')}₫${product.promotionalPrice ? ` (Sale: ${product.promotionalPrice.toLocaleString('vi-VN')}₫)` : ''}`)
+        console.log(`     📦 SKU: ${product.sku || 'N/A'}`)
+        console.log(`     📂 Category: ${product.category || 'N/A'}`)
+        if (product.linkShopee || product.linkTiktok || product.linkLazada || product.linkDmx || product.linkTiki) {
+          const platforms = []
+          if (product.linkShopee) platforms.push('Shopee')
+          if (product.linkTiktok) platforms.push('TikTok')
+          if (product.linkLazada) platforms.push('Lazada')
+          if (product.linkDmx) platforms.push('DMX')
+          if (product.linkTiki) platforms.push('Tiki')
+          console.log(`     🔗 Platform links: ${platforms.join(', ')}`)
+        }
+        console.log('')
+      })
+
+      // Step 4: Confirm and proceed with sync
+      console.log('💾 STEP 4: Adding missing products to tool database...')
+      console.log(`📝 About to process ${missingProducts.length} products in batches...`)
+
+      const addResult = await this.addMissingProducts(missingProducts)
+      report.newlyAdded = addResult.success
+      report.errors = addResult.errors
+
+      // Final results
+      console.log('\n' + '='.repeat(60))
+      console.log('🎯 SYNC PROCESS COMPLETED')
+      console.log('='.repeat(60))
+      console.log(`📊 Website products: ${report.wooProducts}`)
+      console.log(`📊 Tool products (before): ${report.toolProducts}`)
+      console.log(`📊 Missing products found: ${report.missingProducts}`)
+      console.log(`✅ Successfully added: ${addResult.success}`)
+      console.log(`❌ Failed to add: ${addResult.errors.length}`)
+      console.log(`📊 Tool products (after): ${report.toolProducts + addResult.success}`)
+
+      if (addResult.errors.length > 0) {
+        console.log('\n❌ ERRORS ENCOUNTERED:')
+        addResult.errors.forEach((error, index) => {
+          console.error(`   ${index + 1}. ${error}`)
+        })
+      }
+
+      if (addResult.success > 0) {
+        console.log(`\n🎉 SUCCESS: ${addResult.success} products have been added to your tool database!`)
+        console.log('   💡 You can now manage these products in your tool interface')
+      }
+
+      return report
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+      console.error('❌ SYNC PROCESS FAILED:', errorMsg)
+      report.errors.push(errorMsg)
+      return report
+    }
+  }
+
+  private async getToolProducts(): Promise<Array<{website_id: string}>> {
+    if (!this.supabase) throw new Error('Database not connected')
+
+    const { data, error } = await this.supabase
+      .from(ENV.DEFAULT_PRODUCTS_TABLE)
+      .select('website_id')
+
+    if (error) {
+      throw new Error(`Database error: ${error.message}`)
+    }
+
+    return data || []
+  }
+
+  private async getAllWooCommerceProducts(): Promise<any[]> {
+    const allProducts: any[] = []
+    let page = 1
+    const perPage = 100
+
+    try {
+      while (true) {
+        const products = await wooCommerceService.getProducts({
+          page,
+          per_page: perPage,
+          status: 'publish'
+        })
+
+        if (!products || products.length === 0) {
+          break
+        }
+
+        allProducts.push(...products)
+        console.log(`   📄 Page ${page}: ${products.length} products (Total: ${allProducts.length})`)
+        page++
+
+        // Break if we got less than perPage items (last page)
+        if (products.length < perPage) {
+          break
+        }
+
+        // Small delay to be nice to the API
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+
+      return allProducts
+    } catch (error) {
+      throw new Error(`Failed to fetch WooCommerce products: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  private async findMissingProducts(toolProducts: Array<{website_id: string}>, wooProducts: any[]): Promise<ProductData[]> {
+    const toolProductIds = new Set(toolProducts.map(p => p.website_id.toString()))
+
+    const missingWooProducts = wooProducts.filter(wooProduct =>
+      !toolProductIds.has(wooProduct.id.toString())
+    )
+
+    console.log(`   🔍 Tool has: ${toolProductIds.size} products`)
+    console.log(`   🛒 WooCommerce has: ${wooProducts.length} products`)
+    console.log(`   ❌ Missing: ${missingWooProducts.length} products`)
+
+    // Convert missing WooCommerce products to ProductData format
+    const missingProducts: ProductData[] = missingWooProducts.map(wooProduct => {
+      return this.mapWooProductToProductData(wooProduct)
+    })
+
+    return missingProducts
+  }
+
+  private mapWooProductToProductData(wooProduct: any): ProductData {
+    console.log(`🔍 Optimized mapping for product ${wooProduct.id}: extracting essential meta only`)
+
+    // Extract essential platform data from meta_data only (no description parsing for speed)
+    const metaData = wooProduct.meta_data || []
+    const platformData = {
+      linkShopee: '',
+      giaShopee: null as number | null,
+      linkTiktok: '',
+      giaTiktok: null as number | null,
+      linkLazada: '',
+      giaLazada: null as number | null,
+      linkDmx: '',
+      giaDmx: null as number | null,
+      linkTiki: '',
+      giaTiki: null as number | null,
+    }
+
+    // Extract platform links, prices and stock status from meta_data efficiently
+    let hetHang = false // Default: Còn hàng
+
+    metaData.forEach((meta: any) => {
+      switch (meta.key) {
+        case 'link_shopee':
+          platformData.linkShopee = meta.value?.trim() || ''
+          break
+        case 'gia_shopee':
+          platformData.giaShopee = parsePriceText(meta.value) || null
+          break
+        case 'link_tiktok':
+          platformData.linkTiktok = meta.value?.trim() || ''
+          break
+        case 'gia_tiktok':
+          platformData.giaTiktok = parsePriceText(meta.value) || null
+          break
+        case 'link_lazada':
+          platformData.linkLazada = meta.value?.trim() || ''
+          break
+        case 'gia_lazada':
+          platformData.giaLazada = parsePriceText(meta.value) || null
+          break
+        case 'link_dmx':
+          platformData.linkDmx = meta.value?.trim() || ''
+          break
+        case 'gia_dmx':
+          platformData.giaDmx = parsePriceText(meta.value) || null
+          break
+        case 'link_tiki':
+          platformData.linkTiki = meta.value?.trim() || ''
+          break
+        case 'gia_tiki':
+          platformData.giaTiki = parsePriceText(meta.value) || null
+          break
+        case 'het_hang':
+          // Extract stock status: "Còn hàng" or "Hết hàng"
+          const stockValue = String(meta.value).trim()
+          hetHang = stockValue === 'Hết hàng'
+          console.log(`📦 Stock status for product ${wooProduct.id}: "${stockValue}" -> ${hetHang ? 'Hết hàng' : 'Còn hàng'}`)
+          break
+      }
+    })
+
+    return {
+      id: '', // Will be set by database
+      websiteId: wooProduct.id.toString(),
+      title: wooProduct.name?.trim() || '',
+      price: parsePriceText(wooProduct.regular_price || '0'),
+      promotionalPrice: parsePriceText(wooProduct.sale_price || '0') || null,
+      sku: wooProduct.sku?.trim() || '',
+      imageUrl: wooProduct.images?.[0]?.src?.trim() || '',
+      externalUrl: wooProduct.permalink?.trim() || '',
+      currency: 'VND',
+
+      // Platform links and prices from meta_data
+      linkShopee: platformData.linkShopee,
+      giaShopee: platformData.giaShopee,
+      linkTiktok: platformData.linkTiktok,
+      giaTiktok: platformData.giaTiktok,
+      linkLazada: platformData.linkLazada,
+      giaLazada: platformData.giaLazada,
+      linkDmx: platformData.linkDmx,
+      giaDmx: platformData.giaDmx,
+      linkTiki: platformData.linkTiki,
+      giaTiki: platformData.giaTiki,
+
+      // Stock status from meta_data
+      hetHang: hetHang,
+
+      // Skip other meta to optimize speed
+      // - category: not synced for performance
+      // - description: not synced for performance
+    }
+  }
+
+  private async addMissingProducts(products: ProductData[]): Promise<{success: number, errors: string[]}> {
+    if (!this.supabase) throw new Error('Database not connected')
+
+    const chunkSize = 50
+    let successCount = 0
+    const errors: string[] = []
+    const addedProducts: string[] = []
+
+    console.log(`\n⚡ OPTIMIZED SYNC: Processing ${products.length} products with essential meta only`)
+    console.log(`📦 Processing in ${Math.ceil(products.length / chunkSize)} batches for optimal speed...`)
+
+    for (let i = 0; i < products.length; i += chunkSize) {
+      const chunk = products.slice(i, i + chunkSize)
+      const batchNumber = Math.floor(i / chunkSize) + 1
+      const totalBatches = Math.ceil(products.length / chunkSize)
+
+      console.log(`\n📦 BATCH ${batchNumber}/${totalBatches}: Processing ${chunk.length} products...`)
+
+      // Show products in this batch
+      chunk.forEach((product, index) => {
+        console.log(`   ${i + index + 1}. [${product.websiteId}] ${product.title} - ${product.price.toLocaleString('vi-VN')}₫`)
+      })
+
+      const payload = chunk.map(product => ({
+        // Essential meta only for optimized sync
+        website_id: product.websiteId,
+        title: product.title,
+        sku: product.sku,
+        price: product.price,
+        promotional_price: product.promotionalPrice,
+        image_url: product.imageUrl,
+        external_url: product.externalUrl,
+        currency: product.currency,
+        // Stock status from meta_data
+        het_hang: product.hetHang || false,
+        // Platform links and prices
+        link_shopee: product.linkShopee,
+        gia_shopee: product.giaShopee,
+        link_tiktok: product.linkTiktok,
+        gia_tiktok: product.giaTiktok,
+        link_lazada: product.linkLazada,
+        gia_lazada: product.giaLazada,
+        link_dmx: product.linkDmx,
+        gia_dmx: product.giaDmx,
+        link_tiki: product.linkTiki,
+        gia_tiki: product.giaTiki,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        // Skip for performance: category, description
+      }))
+
+      try {
+        console.log(`   🔄 Sending batch ${batchNumber} to database...`)
+
+        const { data, error } = await this.supabase
+          .from(ENV.DEFAULT_PRODUCTS_TABLE)
+          .upsert(payload, {
+            onConflict: 'website_id',
+            ignoreDuplicates: false
+          })
+
+        if (error) {
+          const errorMsg = `❌ Batch ${batchNumber} failed: ${error.message}`
+          console.error(errorMsg)
+          errors.push(errorMsg)
+
+          // Log which products failed
+          console.log('   📋 Failed products in this batch:')
+          chunk.forEach((product, index) => {
+            console.log(`      ${i + index + 1}. [${product.websiteId}] ${product.title}`)
+          })
+        } else {
+          successCount += chunk.length
+          console.log(`   ✅ Batch ${batchNumber} SUCCESS: ${chunk.length} products added to database`)
+
+          // Track added products
+          chunk.forEach((product, index) => {
+            addedProducts.push(`[${product.websiteId}] ${product.title}`)
+          })
+        }
+
+        // Progress indicator
+        const progressPercent = Math.round(((i + chunk.length) / products.length) * 100)
+        console.log(`   📈 Progress: ${i + chunk.length}/${products.length} (${progressPercent}%)`)
+
+        // Small delay between batches to be nice to the database
+        await new Promise(resolve => setTimeout(resolve, 300))
+
+      } catch (error) {
+        const errorMsg = `❌ Batch ${batchNumber} exception: ${error instanceof Error ? error.message : 'Unknown error'}`
+        console.error(errorMsg)
+        errors.push(errorMsg)
+
+        console.log('   📋 Products that failed due to exception:')
+        chunk.forEach((product, index) => {
+          console.log(`      ${i + index + 1}. [${product.websiteId}] ${product.title}`)
+        })
+      }
+    }
+
+    // Summary of added products
+    if (addedProducts.length > 0) {
+      console.log(`\n✅ SUCCESSFULLY ADDED PRODUCTS (${addedProducts.length} total):`)
+      console.log('='.repeat(60))
+      addedProducts.forEach((product, index) => {
+        console.log(`   ${(index + 1).toString().padStart(3, ' ')}. ${product}`)
+      })
+    }
+
+    return { success: successCount, errors }
+  }
+
+  // Method to just check without syncing
+  async checkMissingProductsOnly(): Promise<{missing: ProductData[], report: Omit<SyncReport, 'newlyAdded' | 'errors'>}> {
+    const toolProducts = await this.getToolProducts()
+    const wooProducts = await this.getAllWooCommerceProducts()
+    const missingProducts = await this.findMissingProducts(toolProducts, wooProducts)
+
+    return {
+      missing: missingProducts,
+      report: {
+        toolProducts: toolProducts.length,
+        wooProducts: wooProducts.length,
+        missingProducts: missingProducts.length,
+        missingProductsList: missingProducts
+      }
+    }
+  }
+
+  // Method to update stock status for all existing products
+  async updateAllProductsStockStatus(): Promise<{updated: number, errors: string[]}> {
+    if (!this.supabase) throw new Error('Database not connected')
+
+    const errors: string[] = []
+    let updated = 0
+
+    try {
+      console.log('🔄 UPDATING STOCK STATUS FOR ALL PRODUCTS')
+      console.log('='.repeat(60))
+
+      // Get all tool products with their website_id
+      const { data: toolProducts, error: toolError } = await this.supabase
+        .from(ENV.DEFAULT_PRODUCTS_TABLE)
+        .select('id, website_id, title')
+
+      if (toolError) {
+        throw new Error(`Failed to get tool products: ${toolError.message}`)
+      }
+
+      if (!toolProducts || toolProducts.length === 0) {
+        console.log('ℹ️ No products found in tool database')
+        return { updated: 0, errors: [] }
+      }
+
+      console.log(`📊 Found ${toolProducts.length} products in tool database`)
+      console.log('🛒 Fetching current stock status from WooCommerce...')
+
+      // Get all WooCommerce products with stock status
+      const wooProducts = await this.getAllWooCommerceProducts()
+      const wooProductsMap = new Map(
+        wooProducts.map(p => [p.id.toString(), p])
+      )
+
+      console.log(`📦 Processing stock status updates...`)
+
+      // Process in batches
+      const batchSize = 50
+      const batches = Math.ceil(toolProducts.length / batchSize)
+
+      for (let i = 0; i < toolProducts.length; i += batchSize) {
+        const batch = toolProducts.slice(i, i + batchSize)
+        const batchNum = Math.floor(i / batchSize) + 1
+
+        console.log(`\n📦 BATCH ${batchNum}/${batches}: Processing ${batch.length} products...`)
+
+        const updates = []
+
+        for (const toolProduct of batch) {
+          const wooProduct = wooProductsMap.get(toolProduct.website_id)
+
+          if (wooProduct) {
+            // Extract het_hang from meta_data custom field
+            let hetHang = false
+            if (wooProduct.meta_data && Array.isArray(wooProduct.meta_data)) {
+              const hetHangMeta = wooProduct.meta_data.find((meta: any) => meta.key === 'het_hang')
+              if (hetHangMeta) {
+                // Handle text values: "Còn hàng" or "Hết hàng"
+                const value = String(hetHangMeta.value).trim()
+                hetHang = value === 'Hết hàng'
+              } else {
+                // Default to "Còn hàng" (not out of stock) when no custom field found
+                hetHang = false
+              }
+            } else {
+              // Default to "Còn hàng" when no meta_data at all
+              hetHang = false
+            }
+
+            updates.push({
+              id: toolProduct.id,
+              het_hang: hetHang,
+              updated_at: new Date().toISOString()
+            })
+
+            console.log(`   ${hetHang ? '❌' : '✅'} [${toolProduct.website_id}] ${toolProduct.title} - ${hetHang ? 'Hết hàng' : 'Còn hàng'}`)
+          } else {
+            console.log(`   ⚠️ [${toolProduct.website_id}] ${toolProduct.title} - Not found on WooCommerce`)
+          }
+        }
+
+        // Update database for this batch
+        if (updates.length > 0) {
+          try {
+            for (const update of updates) {
+              const { error, data } = await this.supabase
+                .from(ENV.DEFAULT_PRODUCTS_TABLE)
+                .update({
+                  het_hang: update.het_hang,
+                  updated_at: update.updated_at
+                })
+                .eq('id', update.id)
+                .select('id, het_hang')
+
+              if (error) {
+                const errorMsg = `Failed to update product ID ${update.id}: ${error.message}`
+                errors.push(errorMsg)
+                console.error(`   ❌ ${errorMsg}`)
+              } else {
+                if (data && data.length > 0) {
+                  updated++
+                } else {
+                  console.warn(`   ⚠️ Update completed but no data returned for ID ${update.id} - row might not exist`)
+                }
+              }
+            }
+
+            console.log(`   ✅ Batch ${batchNum} completed: ${updates.length} products processed`)
+          } catch (error) {
+            const errorMsg = `Batch ${batchNum} exception: ${error instanceof Error ? error.message : 'Unknown error'}`
+            errors.push(errorMsg)
+            console.error(`   ❌ ${errorMsg}`)
+          }
+        }
+
+        // Progress indicator
+        const progress = Math.round(((i + batch.length) / toolProducts.length) * 100)
+        console.log(`   📈 Overall Progress: ${i + batch.length}/${toolProducts.length} (${progress}%)`)
+
+        // Small delay between batches
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+
+      console.log('\n' + '='.repeat(60))
+      console.log('🎯 STOCK STATUS UPDATE COMPLETED')
+      console.log('='.repeat(60))
+      console.log(`📊 Products processed: ${toolProducts.length}`)
+      console.log(`✅ Successfully updated: ${updated}`)
+      console.log(`❌ Errors: ${errors.length}`)
+
+      if (errors.length > 0) {
+        console.log('\n❌ ERRORS:')
+        errors.forEach((error, index) => {
+          console.error(`   ${index + 1}. ${error}`)
+        })
+      }
+
+      if (updated > 0) {
+        console.log(`\n🎉 SUCCESS: Updated stock status for ${updated} products!`)
+      }
+
+      return { updated, errors }
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+      console.error('❌ Stock status update failed:', errorMsg)
+      errors.push(errorMsg)
+      return { updated, errors }
+    }
+  }
+
+  // Method to update stock status only with detailed statistics
+  async updateStockStatusOnly(): Promise<{
+    success: boolean
+    message: string
+    beforeStats: { instock: number, outofstock: number, total: number }
+    afterStats: { instock: number, outofstock: number, total: number }
+    updated: number
+    errors: string[]
+  }> {
+    if (!this.supabase) throw new Error('Database not connected')
+
+    const errors: string[] = []
+    let updated = 0
+
+    try {
+      console.log('📦 STOCK STATUS UPDATE PROCESS STARTED')
+      console.log('='.repeat(60))
+
+      // Step 1: Get current tool products
+      const { data: toolProducts, error: toolError } = await this.supabase
+        .from(ENV.DEFAULT_PRODUCTS_TABLE)
+        .select('id, website_id, title, het_hang')
+
+      if (toolError) {
+        throw new Error(`Failed to get tool products: ${toolError.message}`)
+      }
+
+      if (!toolProducts || toolProducts.length === 0) {
+        console.log('ℹ️ No products found in tool database')
+        return {
+          success: false,
+          message: 'No products found in database',
+          beforeStats: { instock: 0, outofstock: 0, total: 0 },
+          afterStats: { instock: 0, outofstock: 0, total: 0 },
+          updated: 0,
+          errors: ['No products found in database']
+        }
+      }
+
+      // Step 2: Count current stock status in database
+      console.log('📊 STEP 1: Analyzing current stock status in database...')
+      const beforeStats = { instock: 0, outofstock: 0, total: toolProducts.length }
+      toolProducts.forEach((product: any) => {
+        const { isOutOfStock } = this.getStockStatusFromValue(product.het_hang)
+        if (isOutOfStock) {
+          beforeStats.outofstock++
+        } else {
+          beforeStats.instock++
+        }
+      })
+
+      console.log(`📊 Current database status:`)
+      console.log(`   ✅ Còn hàng: ${beforeStats.instock} products`)
+      console.log(`   ❌ Hết hàng: ${beforeStats.outofstock} products`)
+      console.log(`   📦 Total: ${beforeStats.total} products`)
+
+      // Step 3: Get stock status from WooCommerce
+      console.log('\n🛒 STEP 2: Fetching current stock status from WooCommerce...')
+      const wooProducts = await this.getAllWooCommerceProducts()
+      const wooProductsMap = new Map(
+        wooProducts.map(p => [p.id.toString(), p])
+      )
+
+      console.log(`🛒 Fetched ${wooProducts.length} products from WooCommerce`)
+
+      // Step 4: Analyze WooCommerce stock status
+      console.log('\n📋 STEP 3: Analyzing WooCommerce stock status...')
+      const wooStats = { instock: 0, outofstock: 0 }
+      wooProducts.forEach((wooProduct: any) => {
+        const { isOutOfStock } = this.getStockStatusFromMetaData(wooProduct.meta_data)
+        if (isOutOfStock) {
+          wooStats.outofstock++
+        } else {
+          wooStats.instock++
+        }
+      })
+
+      console.log(`📋 WooCommerce stock status:`)
+      console.log(`   ✅ Còn hàng: ${wooStats.instock} products`)
+      console.log(`   ❌ Hết hàng: ${wooStats.outofstock} products`)
+
+      // Step 5: Update products in batches
+      console.log('\n🔄 STEP 4: Updating stock status in database...')
+      const batchSize = 50
+      const batches = Math.ceil(toolProducts.length / batchSize)
+
+      for (let i = 0; i < toolProducts.length; i += batchSize) {
+        const batch = toolProducts.slice(i, i + batchSize)
+        const batchNum = Math.floor(i / batchSize) + 1
+
+        console.log(`\n📦 BATCH ${batchNum}/${batches}: Processing ${batch.length} products...`)
+
+        for (const toolProduct of batch) {
+          const wooProduct = wooProductsMap.get(toolProduct.website_id)
+
+          if (wooProduct) {
+            // Get het_hang status from WooCommerce
+            const { isOutOfStock } = this.getStockStatusFromMetaData(wooProduct.meta_data)
+            const newHetHang = isOutOfStock
+
+            // Only update if different
+            const currentHetHang = toolProduct.het_hang
+            const currentIsOutOfStock = this.getStockStatusFromValue(currentHetHang).isOutOfStock
+
+            if (currentIsOutOfStock !== newHetHang) {
+              try {
+                const { error } = await this.supabase
+                  .from(ENV.DEFAULT_PRODUCTS_TABLE)
+                  .update({
+                    het_hang: newHetHang,
+                    updated_at: new Date().toISOString()
+                  })
+                  .eq('id', toolProduct.id)
+
+                if (error) {
+                  const errorMsg = `Failed to update product ID ${toolProduct.id}: ${error.message}`
+                  errors.push(errorMsg)
+                  console.error(`   ❌ ${errorMsg}`)
+                } else {
+                  updated++
+                  console.log(`   ✅ [${toolProduct.website_id}] ${toolProduct.title} - ${currentIsOutOfStock ? 'Hết hàng' : 'Còn hàng'} → ${newHetHang ? 'Hết hàng' : 'Còn hàng'}`)
+                }
+              } catch (error) {
+                const errorMsg = `Exception updating product ID ${toolProduct.id}: ${error instanceof Error ? error.message : 'Unknown error'}`
+                errors.push(errorMsg)
+                console.error(`   ❌ ${errorMsg}`)
+              }
+            } else {
+              console.log(`   ✨ [${toolProduct.website_id}] ${toolProduct.title} - No change needed (${newHetHang ? 'Hết hàng' : 'Còn hàng'})`)
+            }
+          } else {
+            console.log(`   ⚠️ [${toolProduct.website_id}] ${toolProduct.title} - Not found on WooCommerce`)
+          }
+        }
+
+        // Progress indicator
+        const progress = Math.round(((i + batch.length) / toolProducts.length) * 100)
+        console.log(`   📈 Progress: ${i + batch.length}/${toolProducts.length} (${progress}%)`)
+      }
+
+      // Step 6: Count final stock status
+      console.log('\n📊 STEP 5: Counting final stock status...')
+      const { data: finalProducts, error: finalError } = await this.supabase
+        .from(ENV.DEFAULT_PRODUCTS_TABLE)
+        .select('het_hang')
+
+      if (finalError) {
+        console.error('Failed to get final counts:', finalError.message)
+        errors.push(`Failed to get final counts: ${finalError.message}`)
+      }
+
+      const afterStats = { instock: 0, outofstock: 0, total: finalProducts?.length || 0 }
+      if (finalProducts) {
+        finalProducts.forEach((product: any) => {
+          const { isOutOfStock } = this.getStockStatusFromValue(product.het_hang)
+          if (isOutOfStock) {
+            afterStats.outofstock++
+          } else {
+            afterStats.instock++
+          }
+        })
+      }
+
+      // Final results
+      console.log('\n' + '='.repeat(60))
+      console.log('🎯 STOCK STATUS UPDATE COMPLETED')
+      console.log('='.repeat(60))
+      console.log(`📊 Results Summary:`)
+      console.log(`   📦 Total products: ${beforeStats.total}`)
+      console.log(`   🔄 Updated: ${updated}`)
+      console.log(`   ❌ Errors: ${errors.length}`)
+      console.log(`\n📈 Stock Status Changes:`)
+      console.log(`   Before: ✅ ${beforeStats.instock} | ❌ ${beforeStats.outofstock}`)
+      console.log(`   After:  ✅ ${afterStats.instock} | ❌ ${afterStats.outofstock}`)
+      console.log(`   Net change: ${afterStats.instock - beforeStats.instock} Còn hàng, ${afterStats.outofstock - beforeStats.outofstock} Hết hàng`)
+
+      if (errors.length > 0) {
+        console.log('\n❌ ERRORS:')
+        errors.forEach((error, index) => {
+          console.error(`   ${index + 1}. ${error}`)
+        })
+      }
+
+      const message = updated > 0
+        ? `Successfully updated ${updated} products stock status`
+        : 'No products needed stock status update'
+
+      return {
+        success: errors.length === 0,
+        message,
+        beforeStats,
+        afterStats,
+        updated,
+        errors
+      }
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+      console.error('❌ Stock status update failed:', errorMsg)
+      errors.push(errorMsg)
+      return {
+        success: false,
+        message: `Stock status update failed: ${errorMsg}`,
+        beforeStats: { instock: 0, outofstock: 0, total: 0 },
+        afterStats: { instock: 0, outofstock: 0, total: 0 },
+        updated: 0,
+        errors
+      }
+    }
+  }
+
+  private getStockStatusFromValue(hetHangValue: any) {
+    const isOutOfStock =
+      hetHangValue === true ||
+      hetHangValue === 'true' ||
+      hetHangValue === 'Hết hàng' ||
+      hetHangValue === 'hết hàng' ||
+      hetHangValue === 1
+
+    return { isOutOfStock }
+  }
+
+  private getStockStatusFromMetaData(metaData: any[]) {
+    if (!metaData || !Array.isArray(metaData)) {
+      return { isOutOfStock: false } // Default to "Còn hàng"
+    }
+
+    const hetHangMeta = metaData.find((meta: any) => meta.key === 'het_hang')
+    if (hetHangMeta) {
+      const value = String(hetHangMeta.value).trim()
+      return { isOutOfStock: value === 'Hết hàng' }
+    }
+
+    return { isOutOfStock: false } // Default to "Còn hàng" when no custom field found
+  }
+
+  // Method to find products that exist in tool but no longer exist in WooCommerce
+  async findDeletedProducts(): Promise<Array<{id: string, website_id: string, title: string}>> {
+    if (!this.supabase) throw new Error('Database not connected')
+
+    try {
+      // Get all tool products
+      const { data: toolProducts, error: toolError } = await this.supabase
+        .from(ENV.DEFAULT_PRODUCTS_TABLE)
+        .select('id, website_id, title')
+
+      if (toolError) {
+        throw new Error(`Failed to get tool products: ${toolError.message}`)
+      }
+
+      if (!toolProducts || toolProducts.length === 0) {
+        return []
+      }
+
+      // Get all WooCommerce products
+      const wooProducts = await this.getAllWooCommerceProducts()
+      const wooProductIds = new Set(wooProducts.map(p => p.id.toString()))
+
+      // Find products in tool that don't exist in WooCommerce
+      const deletedProducts = toolProducts.filter(toolProduct =>
+        !wooProductIds.has(toolProduct.website_id)
+      )
+
+      return deletedProducts
+    } catch (error) {
+      throw new Error(`Failed to find deleted products: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  // Method to delete products from database
+  async deleteProductsFromDatabase(productIds: string[]): Promise<{deleted: number, errors: string[]}> {
+    if (!this.supabase) throw new Error('Database not connected')
+
+    const errors: string[] = []
+    let deleted = 0
+
+    if (productIds.length === 0) {
+      return { deleted: 0, errors: [] }
+    }
+
+    console.log(`🗑️ Deleting ${productIds.length} products from database...`)
+
+    try {
+      // Process in batches to avoid overwhelming the database
+      const batchSize = 50
+      const batches = Math.ceil(productIds.length / batchSize)
+
+      for (let i = 0; i < productIds.length; i += batchSize) {
+        const batch = productIds.slice(i, i + batchSize)
+        const batchNum = Math.floor(i / batchSize) + 1
+
+        console.log(`🗑️ BATCH ${batchNum}/${batches}: Deleting ${batch.length} products...`)
+
+        try {
+          const { error, count } = await this.supabase
+            .from(ENV.DEFAULT_PRODUCTS_TABLE)
+            .delete()
+            .in('id', batch)
+
+          if (error) {
+            const errorMsg = `❌ Batch ${batchNum} delete failed: ${error.message}`
+            console.error(errorMsg)
+            errors.push(errorMsg)
+          } else {
+            const deletedCount = count || batch.length
+            deleted += deletedCount
+            console.log(`   ✅ Batch ${batchNum} SUCCESS: ${deletedCount} products deleted`)
+          }
+        } catch (error) {
+          const errorMsg = `❌ Batch ${batchNum} exception: ${error instanceof Error ? error.message : 'Unknown error'}`
+          console.error(errorMsg)
+          errors.push(errorMsg)
+        }
+
+        // Small delay between batches
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+
+      console.log(`🗑️ Deletion completed: ${deleted} products deleted, ${errors.length} errors`)
+      return { deleted, errors }
+
+    } catch (error) {
+      const errorMsg = `Failed to delete products: ${error instanceof Error ? error.message : 'Unknown error'}`
+      console.error(errorMsg)
+      errors.push(errorMsg)
+      return { deleted, errors }
+    }
+  }
+
+  // Method to update all existing products with latest data from WooCommerce
+  async updateAllProductsData(): Promise<{updated: number, errors: string[]}> {
+    if (!this.supabase) throw new Error('Database not connected')
+
+    const errors: string[] = []
+    let updated = 0
+
+    try {
+      console.log('⚡ OPTIMIZED UPDATE: Syncing essential meta fields only')
+      console.log('🔄 UPDATING ALL PRODUCTS DATA FROM WOOCOMMERCE')
+      console.log('='.repeat(60))
+      console.log('📊 Sync scope: Title, SKU, Prices, Images, URLs, Platform Links & Prices')
+
+      // Get all tool products
+      const { data: toolProducts, error: toolError } = await this.supabase
+        .from(ENV.DEFAULT_PRODUCTS_TABLE)
+        .select('id, website_id, title')
+
+      if (toolError) {
+        throw new Error(`Failed to get tool products: ${toolError.message}`)
+      }
+
+      if (!toolProducts || toolProducts.length === 0) {
+        console.log('ℹ️ No products found in tool database')
+        return { updated: 0, errors: [] }
+      }
+
+      console.log(`📊 Found ${toolProducts.length} products in tool database`)
+
+      // Get all WooCommerce products
+      const wooProducts = await this.getAllWooCommerceProducts()
+      const wooProductsMap = new Map(
+        wooProducts.map(p => [p.id.toString(), p])
+      )
+
+      console.log(`🛒 Fetched ${wooProducts.length} products from WooCommerce`)
+      console.log('🔄 Updating product data...')
+
+      // Process in batches
+      const batchSize = 50
+      const batches = Math.ceil(toolProducts.length / batchSize)
+
+      for (let i = 0; i < toolProducts.length; i += batchSize) {
+        const batch = toolProducts.slice(i, i + batchSize)
+        const batchNum = Math.floor(i / batchSize) + 1
+
+        console.log(`\n📦 BATCH ${batchNum}/${batches}: Processing ${batch.length} products...`)
+
+        for (const toolProduct of batch) {
+          const wooProduct = wooProductsMap.get(toolProduct.website_id)
+
+          if (wooProduct) {
+            try {
+              // Map WooCommerce product to our format
+              const updatedProductData = this.mapWooProductToProductData(wooProduct)
+
+              // Update only essential meta fields for optimized sync
+              const { error } = await this.supabase
+                .from(ENV.DEFAULT_PRODUCTS_TABLE)
+                .update({
+                  title: updatedProductData.title,
+                  price: updatedProductData.price,
+                  promotional_price: updatedProductData.promotionalPrice,
+                  sku: updatedProductData.sku,
+                  image_url: updatedProductData.imageUrl,
+                  external_url: updatedProductData.externalUrl,
+                  currency: updatedProductData.currency,
+                  // Stock status from meta_data
+                  het_hang: updatedProductData.hetHang,
+                  // Platform links and prices
+                  link_shopee: updatedProductData.linkShopee,
+                  gia_shopee: updatedProductData.giaShopee,
+                  link_tiktok: updatedProductData.linkTiktok,
+                  gia_tiktok: updatedProductData.giaTiktok,
+                  link_lazada: updatedProductData.linkLazada,
+                  gia_lazada: updatedProductData.giaLazada,
+                  link_dmx: updatedProductData.linkDmx,
+                  gia_dmx: updatedProductData.giaDmx,
+                  link_tiki: updatedProductData.linkTiki,
+                  gia_tiki: updatedProductData.giaTiki,
+                  updated_at: new Date().toISOString()
+                  // Skip for performance: category, description
+                })
+                .eq('id', toolProduct.id)
+
+              if (error) {
+                const errorMsg = `Failed to update product ID ${toolProduct.id}: ${error.message}`
+                errors.push(errorMsg)
+                console.error(`   ❌ ${errorMsg}`)
+              } else {
+                updated++
+                console.log(`   ✅ [${toolProduct.website_id}] ${toolProduct.title} - Updated successfully`)
+              }
+            } catch (error) {
+              const errorMsg = `Exception updating product ID ${toolProduct.id}: ${error instanceof Error ? error.message : 'Unknown error'}`
+              errors.push(errorMsg)
+              console.error(`   ❌ ${errorMsg}`)
+            }
+          } else {
+            console.log(`   ⚠️ [${toolProduct.website_id}] ${toolProduct.title} - Not found on WooCommerce (will be handled separately)`)
+          }
+        }
+
+        // Progress indicator
+        const progress = Math.round(((i + batch.length) / toolProducts.length) * 100)
+        console.log(`   📈 Progress: ${i + batch.length}/${toolProducts.length} (${progress}%)`)
+
+        // Small delay between batches
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+
+      console.log('\n' + '='.repeat(60))
+      console.log('🎯 PRODUCT DATA UPDATE COMPLETED')
+      console.log('='.repeat(60))
+      console.log(`📊 Products processed: ${toolProducts.length}`)
+      console.log(`✅ Successfully updated: ${updated}`)
+      console.log(`❌ Errors: ${errors.length}`)
+
+      if (errors.length > 0) {
+        console.log('\n❌ ERRORS:')
+        errors.forEach((error, index) => {
+          console.error(`   ${index + 1}. ${error}`)
+        })
+      }
+
+      return { updated, errors }
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+      console.error('❌ Product data update failed:', errorMsg)
+      errors.push(errorMsg)
+      return { updated, errors }
+    }
+  }
+
+  // Comprehensive sync method that handles everything
+  async comprehensiveProductSync(): Promise<{
+    success: boolean
+    message: string
+    stats: {
+      totalWooProducts: number
+      totalToolProducts: number
+      newProductsAdded: number
+      productsUpdated: number
+      productsDeleted: number
+      errors: number
+    }
+    errors: string[]
+  }> {
+    if (!this.supabase) throw new Error('Database not connected')
+
+    const errors: string[] = []
+    const stats = {
+      totalWooProducts: 0,
+      totalToolProducts: 0,
+      newProductsAdded: 0,
+      productsUpdated: 0,
+      productsDeleted: 0,
+      errors: 0
+    }
+
+    try {
+      console.log('🚀 COMPREHENSIVE PRODUCT SYNC STARTED')
+      console.log('='.repeat(80))
+      console.log('⏰ ' + new Date().toLocaleString('vi-VN'))
+      console.log('🔧 Tool: UpdateLocknLock Comprehensive Sync')
+      console.log('='.repeat(80))
+
+      // Step 1: Get current state
+      console.log('\n📊 STEP 1: Analyzing current state...')
+      const toolProducts = await this.getToolProducts()
+      const wooProducts = await this.getAllWooCommerceProducts()
+
+      stats.totalToolProducts = toolProducts.length
+      stats.totalWooProducts = wooProducts.length
+
+      console.log(`📊 Current state:`)
+      console.log(`   🔧 Tool database: ${stats.totalToolProducts} products`)
+      console.log(`   🛒 WooCommerce: ${stats.totalWooProducts} products`)
+
+      // Step 2: Find and delete products that no longer exist in WooCommerce
+      console.log('\n🗑️ STEP 2: Finding products to delete...')
+      const deletedProducts = await this.findDeletedProducts()
+
+      if (deletedProducts.length > 0) {
+        console.log(`🗑️ Found ${deletedProducts.length} products to delete:`)
+        deletedProducts.forEach((product, index) => {
+          console.log(`   ${index + 1}. [${product.website_id}] ${product.title}`)
+        })
+
+        const deleteResult = await this.deleteProductsFromDatabase(deletedProducts.map(p => p.id))
+        stats.productsDeleted = deleteResult.deleted
+        errors.push(...deleteResult.errors)
+      } else {
+        console.log('✅ No products need to be deleted')
+      }
+
+      // Step 3: Add new products from WooCommerce
+      console.log('\n📥 STEP 3: Finding new products to add...')
+      const missingProducts = await this.findMissingProducts(toolProducts, wooProducts)
+
+      if (missingProducts.length > 0) {
+        console.log(`📥 Found ${missingProducts.length} new products to add`)
+        const addResult = await this.addMissingProducts(missingProducts)
+        stats.newProductsAdded = addResult.success
+        errors.push(...addResult.errors)
+      } else {
+        console.log('✅ No new products to add')
+      }
+
+      // Step 4: Update all existing products with latest data
+      console.log('\n🔄 STEP 4: Updating existing products data...')
+      const updateResult = await this.updateAllProductsData()
+      stats.productsUpdated = updateResult.updated
+      errors.push(...updateResult.errors)
+
+      // Final statistics
+      stats.errors = errors.length
+
+      console.log('\n' + '='.repeat(80))
+      console.log('🎯 COMPREHENSIVE SYNC COMPLETED')
+      console.log('='.repeat(80))
+      console.log(`📊 Final Results:`)
+      console.log(`   🛒 WooCommerce products: ${stats.totalWooProducts}`)
+      console.log(`   🔧 Tool products (before): ${stats.totalToolProducts}`)
+      console.log(`   ➕ New products added: ${stats.newProductsAdded}`)
+      console.log(`   🔄 Products updated: ${stats.productsUpdated}`)
+      console.log(`   🗑️ Products deleted: ${stats.productsDeleted}`)
+      console.log(`   ❌ Errors: ${stats.errors}`)
+      console.log(`   🔧 Tool products (after): ${stats.totalToolProducts + stats.newProductsAdded - stats.productsDeleted}`)
+
+      if (errors.length > 0) {
+        console.log('\n❌ ERRORS ENCOUNTERED:')
+        errors.forEach((error, index) => {
+          console.error(`   ${index + 1}. ${error}`)
+        })
+      }
+
+      const totalChanges = stats.newProductsAdded + stats.productsUpdated + stats.productsDeleted
+      const message = totalChanges > 0
+        ? `Comprehensive sync completed: ${stats.newProductsAdded} added, ${stats.productsUpdated} updated, ${stats.productsDeleted} deleted`
+        : 'All products are already up to date'
+
+      return {
+        success: errors.length === 0,
+        message,
+        stats,
+        errors
+      }
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+      console.error('❌ COMPREHENSIVE SYNC FAILED:', errorMsg)
+      errors.push(errorMsg)
+      stats.errors = errors.length
+
+      return {
+        success: false,
+        message: `Comprehensive sync failed: ${errorMsg}`,
+        stats,
+        errors
+      }
+    }
+  }
+}
+
+// Export convenience function
+export async function syncMissingProducts(): Promise<SyncReport> {
+  const checker = new ProductSyncChecker()
+  return await checker.checkAndSyncMissingProducts()
+}
+
+export async function checkMissingProducts(): Promise<{missing: ProductData[], report: Omit<SyncReport, 'newlyAdded' | 'errors'>}> {
+  const checker = new ProductSyncChecker()
+  return await checker.checkMissingProductsOnly()
+}
+
+export async function updateAllProductsStockStatus(): Promise<{updated: number, errors: string[]}> {
+  const checker = new ProductSyncChecker()
+  return await checker.updateAllProductsStockStatus()
+}
+
+export async function updateStockStatusOnly(): Promise<{
+  success: boolean
+  message: string
+  wooStats: { inStock: number, outOfStock: number, total: number }
+  finalStats: { inStock: number, outOfStock: number, total: number }
+  updated: number
+  errors: string[]
+}> {
+  const checker = new ProductSyncChecker()
+  const result = await checker.updateStockStatusOnly()
+
+  // Transform the response to match expected format
+  return {
+    success: result.success,
+    message: result.message,
+    wooStats: {
+      inStock: result.beforeStats.instock,
+      outOfStock: result.beforeStats.outofstock,
+      total: result.beforeStats.total
+    },
+    finalStats: {
+      inStock: result.afterStats.instock,
+      outOfStock: result.afterStats.outofstock,
+      total: result.afterStats.total
+    },
+    updated: result.updated,
+    errors: result.errors
+  }
+}
+
+export async function comprehensiveProductSync(): Promise<{
+  success: boolean
+  message: string
+  stats: {
+    totalWooProducts: number
+    totalToolProducts: number
+    newProductsAdded: number
+    productsUpdated: number
+    productsDeleted: number
+    errors: number
+  }
+  errors: string[]
+}> {
+  const checker = new ProductSyncChecker()
+  return await checker.comprehensiveProductSync()
+}

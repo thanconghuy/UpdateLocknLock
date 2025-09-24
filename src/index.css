@@ -29,6 +29,38 @@ html, body, #root {
   --font-stack: Inter, 'Segoe UI', Roboto, 'Noto Sans', 'Liberation Sans', Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
 }
 
+/* Animations for inline edit form */
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    max-height: 1000px;
+  }
+}
+
+.animate-slideDown {
+  animation: slideDown 0.3s ease-out forwards;
+}
+
+/* Custom animation for form field changes */
+@keyframes highlight {
+  0% {
+    box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.8);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(251, 191, 36, 0);
+  }
+}
+
+.field-changed {
+  animation: highlight 0.6s ease-out;
+}
+
 /* Base */
 body {
   background: var(--color-bg);

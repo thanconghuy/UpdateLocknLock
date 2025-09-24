@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Read(/C:\\Users\\huyth\\Updatelocknlock\\src/**)",
-      "Read(/C:\\Users\\huyth\\Updatelocknlock\\src\\components/**)"
+      "Read(/C:\\Users\\huyth\\Updatelocknlock\\src\\components/**)",
+      "Bash(npm install)",
+      "Bash(npm run build:*)",
+      "Bash(npm run lint)",
+      "Bash(npx tsc:*)"
     ],
     "deny": [],
     "ask": []

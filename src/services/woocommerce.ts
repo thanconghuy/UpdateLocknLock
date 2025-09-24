@@ -16,6 +16,7 @@ export type WooCommerceProduct = {
   regular_price?: string
   sale_price?: string
   sku?: string
+  stock_status?: 'instock' | 'outofstock' | 'onbackorder'
   meta_data?: Array<{
     key: string
     value: string
@@ -30,11 +31,40 @@ export type WooCommerceProductResponse = {
   sku: string
   regular_price: string
   sale_price: string
+  stock_status?: 'instock' | 'outofstock' | 'onbackorder'
+  stock_quantity?: number | null
+  manage_stock?: boolean
+  description?: string
+  short_description?: string
+  permalink?: string
+  categories?: Array<{
+    id: number
+    name: string
+    slug: string
+  }>
+  images?: Array<{
+    id: number
+    src: string
+    name?: string
+    alt?: string
+  }>
   meta_data: Array<{
     id: number
     key: string
     value: string
   }>
+}
+
+export interface GetProductsParams {
+  page?: number
+  per_page?: number
+  search?: string
+  status?: 'draft' | 'pending' | 'private' | 'publish'
+  category?: string
+  sku?: string
+  featured?: boolean
+  orderby?: 'date' | 'id' | 'include' | 'title' | 'slug'
+  order?: 'asc' | 'desc'
 }
 
 export class WooCommerceService {
@@ -62,10 +92,48 @@ export class WooCommerceService {
     }
   }
 
+  async getProducts(params: GetProductsParams = {}): Promise<WooCommerceProductResponse[]> {
+    try {
+      const queryParams = new URLSearchParams()
+
+      // Set default parameters
+      queryParams.append('per_page', (params.per_page || 10).toString())
+      queryParams.append('page', (params.page || 1).toString())
+
+      // Add optional parameters
+      if (params.search) queryParams.append('search', params.search)
+      if (params.status) queryParams.append('status', params.status)
+      if (params.category) queryParams.append('category', params.category)
+      if (params.sku) queryParams.append('sku', params.sku)
+      if (params.featured !== undefined) queryParams.append('featured', params.featured.toString())
+      if (params.orderby) queryParams.append('orderby', params.orderby)
+      if (params.order) queryParams.append('order', params.order)
+
+      const response = await this.api.get(`/products?${queryParams.toString()}`)
+
+      if (response.status === 200) {
+        // Debug: Log first product structure
+        if (response.data && response.data[0]) {
+          console.log('🔍 DEBUG WooAPI: First product structure:', {
+            id: response.data[0].id,
+            name: response.data[0].name,
+            meta_data: response.data[0].meta_data,
+            meta_data_length: response.data[0].meta_data?.length
+          })
+        }
+        return response.data as WooCommerceProductResponse[]
+      }
+      return []
+    } catch (error) {
+      console.error('Failed to fetch products:', error)
+      return []
+    }
+  }
+
   async getProduct(productId: string): Promise<ProductData | null> {
     try {
       const response = await this.api.get(`/products/${productId}`)
-      
+
       if (response.status === 200) {
         return this.mapWooCommerceToProductData(response.data)
       }
@@ -84,7 +152,9 @@ export class WooCommerceService {
       price: parsePriceText(wooProduct.regular_price),
       promotionalPrice: parsePriceText(wooProduct.sale_price),
       externalUrl: wooProduct.external_url || '',
-      sku: wooProduct.sku || ''
+      sku: wooProduct.sku || '',
+      // Stock status from custom field and WooCommerce stock_status
+      hetHang: wooProduct.stock_status === 'outofstock' // Default from WooCommerce stock_status
     }
 
     // Extract platform data from meta_data
@@ -121,9 +191,38 @@ export class WooCommerceService {
           case 'gia_tiki':
             productData.giaTiki = parsePriceText(meta.value)
             break
+          case 'het_hang':
+            // Handle text values: "Còn hàng" or "Hết hàng" (case-insensitive)
+            const value = String(meta.value).trim()
+            console.log('🔍 WooCommerce het_hang value:', value)
+            // Convert to boolean: "Hết hàng" = true (out of stock), "Còn hàng" = false (in stock)
+            productData.hetHang = value === 'Hết hàng'
+            console.log('🔍 Converted to boolean:', productData.hetHang)
+            break
+          case 'so_luong_ton':
+            // Handle stock quantity
+            productData.soLuongTon = parseInt(meta.value) || 0
+            break
         }
       })
     }
+
+    // Sync stock quantity from WooCommerce if available
+    if (wooProduct.stock_quantity !== undefined && wooProduct.stock_quantity !== null) {
+      productData.soLuongTon = wooProduct.stock_quantity
+    }
+
+    // Ensure consistency between het_hang and stock_status
+    // Priority: het_hang custom field > WooCommerce stock_status
+    if (productData.hetHang === undefined) {
+      productData.hetHang = wooProduct.stock_status === 'outofstock'
+    }
+
+    console.log('🔍 Final product stock status:', {
+      het_hang: productData.hetHang,
+      stock_status: wooProduct.stock_status,
+      stock_quantity: productData.soLuongTon
+    })
 
     return productData
   }
@@ -201,6 +300,27 @@ export class WooCommerceService {
     }
     if (productData.giaTiki) {
       metaData.push({ key: 'gia_tiki', value: formatPriceToText(productData.giaTiki) })
+    }
+
+    // Handle het_hang custom field and stock_status mapping
+    if (productData.hetHang !== undefined) {
+      // Map het_hang boolean to text value
+      const hetHangText = productData.hetHang ? 'Hết hàng' : 'Còn hàng'
+      metaData.push({ key: 'het_hang', value: hetHangText })
+
+      // Set WooCommerce stock_status based on het_hang value
+      payload.stock_status = productData.hetHang ? 'outofstock' : 'instock'
+
+      console.log('🔍 Mapping het_hang:', {
+        boolean: productData.hetHang,
+        text: hetHangText,
+        stock_status: payload.stock_status
+      })
+    }
+
+    // Handle stock quantity
+    if (productData.soLuongTon !== undefined && productData.soLuongTon !== null) {
+      metaData.push({ key: 'so_luong_ton', value: productData.soLuongTon.toString() })
     }
 
     if (metaData.length > 0) {
