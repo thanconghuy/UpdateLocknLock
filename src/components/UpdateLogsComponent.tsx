@@ -54,7 +54,7 @@ export default function UpdateLogsComponent() {
                   ({log.operation === 'sync' ? 'Sync from Website' : 'Update to Website'})
                 </span>
                 <span className="text-xs text-gray-500">
-                  {log.timestamp.toLocaleString('vi-VN')}
+                  {new Date(log.timestamp).toLocaleString('vi-VN')}
                 </span>
               </div>
               <div className="text-xs text-gray-600">

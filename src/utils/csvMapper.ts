@@ -60,14 +60,14 @@ function parsePrice(priceStr: string | undefined): number | undefined {
 export function mapCSVRowToProductData(row: CSVRow, index: number): ProductData {
   return {
     id: findFieldValue(row, FIELD_MAPPINGS.id) || String(index + 1),
-    websiteId: findFieldValue(row, FIELD_MAPPINGS.websiteId),
-    title: findFieldValue(row, FIELD_MAPPINGS.title),
-    price: parsePrice(findFieldValue(row, FIELD_MAPPINGS.price)),
+    websiteId: findFieldValue(row, FIELD_MAPPINGS.websiteId) || '',
+    title: findFieldValue(row, FIELD_MAPPINGS.title) || '',
+    price: parsePrice(findFieldValue(row, FIELD_MAPPINGS.price)) || 0,
     promotionalPrice: parsePrice(findFieldValue(row, FIELD_MAPPINGS.promotionalPrice)),
     externalUrl: findFieldValue(row, FIELD_MAPPINGS.externalUrl),
     category: findFieldValue(row, FIELD_MAPPINGS.category),
     imageUrl: findFieldValue(row, FIELD_MAPPINGS.imageUrl),
-    sku: findFieldValue(row, FIELD_MAPPINGS.sku),
+    sku: findFieldValue(row, FIELD_MAPPINGS.sku) || '',
     // Platform data
     linkShopee: findFieldValue(row, FIELD_MAPPINGS.linkShopee),
     giaShopee: parsePrice(findFieldValue(row, FIELD_MAPPINGS.giaShopee)),

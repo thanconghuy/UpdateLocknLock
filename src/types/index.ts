@@ -48,7 +48,7 @@ export type UpdateLog = {
   websiteId?: string
   title?: string
   status: 'success' | 'failed'
-  timestamp: Date
+  timestamp: string
   error?: string
   operation?: 'update' | 'sync'
 }

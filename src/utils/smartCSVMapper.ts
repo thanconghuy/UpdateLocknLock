@@ -139,14 +139,14 @@ export function smartMapCSVRow(row: CSVRow, index: number): ProductData {
   const result: ProductData = {
     // Database ID will be auto-generated, don't use CSV id
     id: `csv_${index + 1}_${Date.now()}`, // Generate unique database ID
-    websiteId: getFieldValue(row, detectedFields.websiteId), // This gets the actual CSV id/product_id
-    title: getFieldValue(row, detectedFields.title),
-    price: parseVietnamesePrice(getFieldValue(row, detectedFields.price)),
+    websiteId: getFieldValue(row, detectedFields.websiteId) || '', // This gets the actual CSV id/product_id
+    title: getFieldValue(row, detectedFields.title) || '',
+    price: parseVietnamesePrice(getFieldValue(row, detectedFields.price)) || 0,
     promotionalPrice: parseVietnamesePrice(getFieldValue(row, detectedFields.promotionalPrice)),
     externalUrl: getFieldValue(row, detectedFields.externalUrl),
     category: getFieldValue(row, detectedFields.category),
     imageUrl: getFieldValue(row, detectedFields.imageUrl),
-    sku: getFieldValue(row, detectedFields.sku),
+    sku: getFieldValue(row, detectedFields.sku) || '',
     // Platform data
     linkShopee: getFieldValue(row, detectedFields.linkShopee),
     giaShopee: parseVietnamesePrice(getFieldValue(row, detectedFields.giaShopee)),

@@ -3,6 +3,7 @@ import type { SupabaseConfig, ProductData } from '../types'
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import { detectPlatformLinks } from '../utils/links'
 import { ENV, hasRequiredEnvVars, isProductionMode } from '../config/env'
+import { useSettingsService } from '../services/settingsService'
 
 interface SupabaseConnectorProps {
   onConnect: (config: SupabaseConfig) => void
@@ -18,52 +19,119 @@ export default function SupabaseConnector({ onConnect, onUpload, data }: Supabas
   const [auditTable, setAuditTable] = useState(ENV.DEFAULT_AUDIT_TABLE)
   const [auditEnabled, setAuditEnabled] = useState(true)
   const [showCredentials, setShowCredentials] = useState(false)
+  const [isConnecting, setIsConnecting] = useState(false)
   // cache the client so we only create/connect once per session
   const clientRef = useRef<SupabaseClient | null>(null)
+  const connectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const settingsService = useSettingsService()
 
   async function handleConnect() {
-    if (!url || !key) {
-      setStatus('missing url/key')
+    // Prevent concurrent connection attempts
+    if (isConnecting) {
+      console.log('Connection already in progress, skipping...')
       return
     }
 
-    if (!clientRef.current) {
-      try {
-        const client = createClient(url, key)
-        clientRef.current = client
-        onConnect({ url, key })
-        // persist credentials locally (browser)
-        try {
-          localStorage.setItem('supabase:url', url)
-          localStorage.setItem('supabase:key', key)
-          localStorage.setItem('supabase:table', table)
-          localStorage.setItem('supabase:audit_table', auditTable)
-          localStorage.setItem('supabase:audit_enabled', String(auditEnabled))
-        } catch (err) {
-          console.warn('localStorage not available', err)
-        }
-        setStatus('connected (client created)')
+    if (!url || !key) {
+      setStatus('❌ Missing URL or key')
+      return
+    }
 
-        // perform a lightweight test: attempt a select on provided table
-        try {
-          const res = await client.from(table).select('id').limit(1)
-          // supabase-js returns { data, error }
-          // @ts-ignore
-          if (res?.error) {
-            setStatus(`connected (warning: ${res.error.message})`)
-          } else {
-            setStatus('connected (ok)')
+    if (clientRef.current) {
+      setStatus('✅ Already connected')
+      return
+    }
+
+    setIsConnecting(true)
+    setStatus('🔄 Connecting to database...')
+
+    // Clear any existing timeout
+    if (connectTimeoutRef.current) {
+      clearTimeout(connectTimeoutRef.current)
+      connectTimeoutRef.current = null
+    }
+
+    try {
+      // Create client with timeout protection
+      const client = createClient(url, key, {
+        db: {
+          schema: 'public'
+        },
+        global: {
+          headers: {
+            'X-Client-Info': 'locknlock-update-tool'
           }
-        } catch (err) {
-          setStatus('connected (test failed)')
-          console.error('connection test error', err)
         }
-      } catch (err) {
-        console.error(err)
-        setStatus('error creating client')
+      })
+
+      // Test connection with timeout
+      const connectionTest = new Promise(async (resolve, reject) => {
+        try {
+          setStatus('🔍 Testing database connection...')
+
+          // Test with a simple query
+          const { data, error } = await client.from(table).select('id').limit(1)
+
+          if (error) {
+            reject(new Error(`Database test failed: ${error.message}`))
+          } else {
+            resolve({ success: true, data })
+          }
+        } catch (error) {
+          reject(error)
+        }
+      })
+
+      // Add timeout protection
+      const timeoutPromise = new Promise((_, reject) => {
+        connectTimeoutRef.current = setTimeout(() => {
+          reject(new Error('Connection timeout after 10 seconds'))
+        }, 10000)
+      })
+
+      // Race between connection test and timeout
+      await Promise.race([connectionTest, timeoutPromise])
+
+      // Clear timeout on success
+      if (connectTimeoutRef.current) {
+        clearTimeout(connectTimeoutRef.current)
+        connectTimeoutRef.current = null
       }
-    } else {
-      setStatus('already connected')
+
+      // Connection successful
+      clientRef.current = client
+      onConnect({ url, key })
+
+      // Persist credentials locally
+      try {
+        localStorage.setItem('supabase:url', url)
+        localStorage.setItem('supabase:key', key)
+        localStorage.setItem('supabase:table', table)
+        localStorage.setItem('supabase:audit_table', auditTable)
+        localStorage.setItem('supabase:audit_enabled', String(auditEnabled))
+      } catch (err) {
+        console.warn('localStorage not available', err)
+      }
+
+      setStatus('✅ Connected successfully')
+
+    } catch (error: any) {
+      console.error('Connection error:', error)
+
+      // Clear timeout on error
+      if (connectTimeoutRef.current) {
+        clearTimeout(connectTimeoutRef.current)
+        connectTimeoutRef.current = null
+      }
+
+      // Reset client on error
+      clientRef.current = null
+
+      const errorMessage = error?.message || 'Unknown connection error'
+      setStatus(`❌ Connection failed: ${errorMessage}`)
+
+    } finally {
+      setIsConnecting(false)
     }
   }
 
@@ -149,28 +217,72 @@ export default function SupabaseConnector({ onConnect, onUpload, data }: Supabas
     }
   }
 
-  // load saved creds on mount and auto-connect if env vars available
+  // Load saved credentials and auto-connect with proper error handling
   React.useEffect(() => {
-    try {
-      const su = localStorage.getItem('supabase:url')
-      const sk = localStorage.getItem('supabase:key')
-      const st = localStorage.getItem('supabase:table')
-      const sat = localStorage.getItem('supabase:audit_table')
-      const sae = localStorage.getItem('supabase:audit_enabled')
-      if (su) setUrl(su)
-      if (sk) setKey(sk)
-      if (st) setTable(st)
-      if (sat) setAuditTable(sat)
-      if (sae !== null) setAuditEnabled(sae === 'true')
-    } catch (err) {
-      // ignore
+    let mounted = true
+
+    const initializeConnection = async () => {
+      try {
+        // Try to load admin settings first (higher priority)
+        try {
+          const adminConfig = await settingsService.getDatabaseConfig()
+          if (adminConfig) {
+            console.log('✅ Using admin settings for database config')
+            setUrl(adminConfig.supabase_url)
+            setKey(adminConfig.supabase_anon_key)
+            setTable(adminConfig.default_products_table)
+            setAuditTable(adminConfig.default_audit_table)
+            setStatus('🔧 Sử dụng cấu hình từ Admin Settings')
+          } else {
+            console.log('ℹ️ No admin config found, using local/env config')
+          }
+        } catch (error) {
+          console.warn('Could not load admin config, fallback to local:', error)
+        }
+
+        // Load saved credentials as fallback (if no admin config)
+        const su = localStorage.getItem('supabase:url')
+        const sk = localStorage.getItem('supabase:key')
+        const st = localStorage.getItem('supabase:table')
+        const sat = localStorage.getItem('supabase:audit_table')
+        const sae = localStorage.getItem('supabase:audit_enabled')
+
+        if (su && !url) setUrl(su)
+        if (sk && !key) setKey(sk)
+        if (st && !table) setTable(st)
+        if (sat && !auditTable) setAuditTable(sat)
+        if (sae !== null) setAuditEnabled(sae === 'true')
+
+        // Auto-connect if environment variables are configured
+        if (hasRequiredEnvVars() && mounted) {
+          setStatus('⏳ Auto-connecting with environment variables...')
+
+          // Add small delay to ensure state is updated
+          await new Promise(resolve => setTimeout(resolve, 100))
+
+          if (mounted) {
+            await handleConnect()
+          }
+        } else if (mounted) {
+          setStatus('⚠️ Database not configured - check environment variables')
+        }
+      } catch (err) {
+        console.warn('Failed to initialize connection:', err)
+        if (mounted) {
+          setStatus('❌ Failed to initialize connection')
+        }
+      }
     }
 
-    // Auto-connect if environment variables are configured
-    if (hasRequiredEnvVars()) {
-      setTimeout(() => {
-        handleConnect()
-      }, 500)
+    initializeConnection()
+
+    // Cleanup function
+    return () => {
+      mounted = false
+      if (connectTimeoutRef.current) {
+        clearTimeout(connectTimeoutRef.current)
+        connectTimeoutRef.current = null
+      }
     }
   }, [])
 
@@ -198,6 +310,7 @@ export default function SupabaseConnector({ onConnect, onUpload, data }: Supabas
   }
 
   const isConfiguredFromEnv = hasRequiredEnvVars()
+  const hasAdminConfig = url && key && status?.includes('Admin Settings')
 
   // Hide entire component when configured from environment in production
   if (isConfiguredFromEnv && isProductionMode()) {
@@ -213,11 +326,24 @@ export default function SupabaseConnector({ onConnect, onUpload, data }: Supabas
             <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded">
               ✓ Auto-configured and Connected
             </span>
-            <button 
+            <button
               className="text-xs text-blue-600 underline"
               onClick={() => setShowCredentials(!showCredentials)}
             >
               {showCredentials ? 'Hide' : 'Show'} Config
+            </button>
+          </div>
+        )}
+        {hasAdminConfig && !isConfiguredFromEnv && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-purple-600 bg-purple-50 px-2 py-1 rounded">
+              🔧 Admin Configuration
+            </span>
+            <button
+              className="text-xs text-blue-600 underline"
+              onClick={() => setShowCredentials(!showCredentials)}
+            >
+              {showCredentials ? 'Hide' : 'Show'} Details
             </button>
           </div>
         )}
@@ -268,11 +394,29 @@ export default function SupabaseConnector({ onConnect, onUpload, data }: Supabas
         </div>
         <div className="flex gap-2">
           {!isConfiguredFromEnv && (
-            <button className="px-3 py-1 bg-blue-600 text-white rounded" onClick={handleConnect}>Connect</button>
+            <button
+              className={`px-3 py-1 text-white rounded ${isConnecting ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+              onClick={handleConnect}
+              disabled={isConnecting}
+            >
+              {isConnecting ? '⏳ Connecting...' : 'Connect'}
+            </button>
           )}
-          <button className="px-3 py-1 bg-green-600 text-white rounded" onClick={handleUpload}>Upload All</button>
+          <button
+            className={`px-3 py-1 text-white rounded ${(!clientRef.current && !isConfiguredFromEnv) ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
+            onClick={handleUpload}
+            disabled={!clientRef.current && !isConfiguredFromEnv}
+          >
+            Upload All
+          </button>
           {!isProductionMode() && (
-            <button className="px-3 py-1 border text-sm" onClick={clearSaved}>Clear saved</button>
+            <button
+              className="px-3 py-1 border text-sm hover:bg-gray-50"
+              onClick={clearSaved}
+              disabled={isConnecting}
+            >
+              Clear saved
+            </button>
           )}
         </div>
         {status && <div className="mt-2 text-sm">Status: {status}</div>}

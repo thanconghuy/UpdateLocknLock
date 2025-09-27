@@ -34,10 +34,12 @@ export interface ProductData {
 export interface UpdateLog {
   id: string
   productId: string
-  action: string
-  changes: any
+  websiteId?: string
+  title?: string
+  status: 'success' | 'failed'
   timestamp: string
-  source: string
+  error?: string
+  operation?: 'update' | 'sync'
 }
 
 export interface ValidationWarning {
@@ -58,10 +60,10 @@ export interface SupabaseConfig {
 }
 
 export interface ValidationError {
-  row: number
+  id: string
+  rowId: string
   field: string
   message: string
-  value?: string
 }
 
 export interface ImportResult {

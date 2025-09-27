@@ -28,7 +28,7 @@ export const useStore = create<State>((set, get) => ({
         websiteId: product.websiteId,
         title: product.title,
         status: 'failed',
-        timestamp: new Date(),
+        timestamp: new Date().toISOString(),
         error: 'No website ID provided for product',
         operation: 'update'
       }
@@ -45,7 +45,7 @@ export const useStore = create<State>((set, get) => ({
         websiteId: product.websiteId,
         title: product.title,
         status: success ? 'success' : 'failed',
-        timestamp: new Date(),
+        timestamp: new Date().toISOString(),
         error: success ? undefined : 'WooCommerce API update failed',
         operation: 'update'
       }
@@ -59,7 +59,7 @@ export const useStore = create<State>((set, get) => ({
         websiteId: product.websiteId,
         title: product.title,
         status: 'failed',
-        timestamp: new Date(),
+        timestamp: new Date().toISOString(),
         error: error instanceof Error ? error.message : 'Unknown error occurred',
         operation: 'update'
       }
@@ -83,7 +83,7 @@ export const useStore = create<State>((set, get) => ({
           websiteId: websiteId,
           title: productData.title,
           status: 'success',
-          timestamp: new Date(),
+          timestamp: new Date().toISOString(),
           error: undefined,
           operation: 'sync'
         }
@@ -97,7 +97,7 @@ export const useStore = create<State>((set, get) => ({
           websiteId: websiteId,
           title: 'Unknown',
           status: 'failed',
-          timestamp: new Date(),
+          timestamp: new Date().toISOString(),
           error: 'Failed to fetch product data from WooCommerce',
           operation: 'sync'
         }
@@ -112,7 +112,7 @@ export const useStore = create<State>((set, get) => ({
         websiteId: websiteId,
         title: 'Unknown',
         status: 'failed',
-        timestamp: new Date(),
+        timestamp: new Date().toISOString(),
         error: error instanceof Error ? error.message : 'Unknown sync error',
         operation: 'sync'
       }

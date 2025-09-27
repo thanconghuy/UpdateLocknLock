@@ -3,17 +3,23 @@ import type { ProductData } from '../types'
 import { createClient } from '@supabase/supabase-js'
 import { applyAutoUpdateIfNeeded, shouldAutoUpdatePrice } from '../utils/priceAutoUpdater'
 import { useStore } from '../store/useStore'
+import ProductManagementCenter from './ProductManagementCenter'
+import { useSettingsService } from '../services/settingsService'
+import { useProject } from '../contexts/ProjectContext'
+import { ENV } from '../config/env'
 
 interface Props {
   data: ProductData[]
   refreshKey?: number
+  onSyncComplete?: () => void
+  onReloadProducts?: () => void
 }
 
 const ALL_FIELDS = [
   'title', 'website_id', 'sku', 'price', 'promotional_price',
   'image_url',
   'shopee', 'tiktok', 'lazada', 'dmx', 'tiki', // Combined brand columns
-  'external_url', 'currency'
+  'external_url', 'currency', 'het_hang'
 ]
 
 // Platform fields that should be excluded from additional fields section
@@ -44,14 +50,98 @@ function getStockStatus(hetHangValue: any) {
   return { isOutOfStock, isInStock }
 }
 
-export default function ProductsPage({ data, refreshKey }: Props) {
+export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloadProducts }: Props) {
   const { updateProductInWooCommerce, syncProductFromWooCommerce } = useStore()
+  const settingsService = useSettingsService()
+  const { currentProject, loading: projectLoading } = useProject()
   const [visibleFields, setVisibleFields] = useState<string[]>(ALL_FIELDS.filter(f => f !== 'updated_at'))
   const [filter, setFilter] = useState<{ platform?: string, recentlyUpdated?: boolean, timeFilter?: string, stockStatus?: 'instock' | 'outofstock', syncStatus?: string }>({})
   const [searchQuery, setSearchQuery] = useState<string>('')
+
+  // Helper function for reloading products
+  const handleReloadProducts = () => {
+    if (onReloadProducts) {
+      onReloadProducts()
+    } else {
+      // Fallback: refresh database data
+      console.log('🔄 Manual reload requested')
+      setHasInitialized(false) // Reset to trigger fresh fetch
+      setDbStatus('🔄 Refreshing data...')
+    }
+  }
+
+  // Helper function to get database config from admin settings or fallback
+  const getDatabaseConfig = async () => {
+    try {
+      console.log('🔍 Loading database config from admin settings...')
+      const adminConfig = await settingsService.getDatabaseConfig()
+      if (adminConfig && adminConfig.supabase_url && adminConfig.supabase_anon_key) {
+        console.log('✅ Using admin settings config')
+        return {
+          url: adminConfig.supabase_url,
+          key: adminConfig.supabase_anon_key,
+          table: adminConfig.default_products_table || 'products'
+        }
+      } else if (adminConfig === null) {
+        console.log('ℹ️ No admin config found (user not authenticated or no config), using fallback')
+      } else {
+        console.log('⚠️ Admin config incomplete, using fallback')
+      }
+    } catch (error) {
+      console.warn('❌ Could not load admin config, using fallback:', error)
+    }
+
+    // Fallback to localStorage and ENV
+    const fallbackConfig = {
+      url: localStorage.getItem('supabase:url') || ENV.SUPABASE_URL,
+      key: localStorage.getItem('supabase:key') || ENV.SUPABASE_ANON_KEY,
+      table: localStorage.getItem('supabase:table') || ENV.DEFAULT_PRODUCTS_TABLE || 'products'
+    }
+
+    console.log('🔄 Using fallback config:', {
+      hasUrl: !!fallbackConfig.url,
+      hasKey: !!fallbackConfig.key,
+      table: fallbackConfig.table
+    })
+
+    return fallbackConfig
+  }
+
+  // Test database connection function
+  const testDatabaseConnection = async () => {
+    try {
+      console.log('🧪 Testing database connection...')
+      const { url, key, table } = await getDatabaseConfig()
+
+      if (!url || !key) {
+        console.error('❌ Missing database credentials for test')
+        return false
+      }
+
+      const supa = createClient(url, key)
+
+      // Simple connectivity test
+      const { error } = await supa
+        .from(table)
+        .select('count', { count: 'exact', head: true })
+        .limit(1)
+
+      if (error) {
+        console.error('❌ Database connection test failed:', error.message)
+        return false
+      }
+
+      console.log('✅ Database connection test successful')
+      return true
+    } catch (error) {
+      console.error('❌ Database connection test exception:', error)
+      return false
+    }
+  }
   const [dbRows, setDbRows] = useState<any[] | null>(null)
   const [loadingDb, setLoadingDb] = useState(false)
   const [dbStatus, setDbStatus] = useState<string | null>(null)
+  const [hasInitialized, setHasInitialized] = useState(false)
   const [pageSize, setPageSize] = useState(10)
   const [currentPage, setCurrentPage] = useState(1)
   const [selectedProduct, setSelectedProduct] = useState<any | null>(null)
@@ -264,23 +354,38 @@ export default function ProductsPage({ data, refreshKey }: Props) {
     console.log('='.repeat(60))
     console.log('⏰ ' + new Date().toLocaleString('vi-VN'))
     console.log('🔧 Tool: UpdateLocknLock Complete Data Loading')
+    console.log('📍 Current project:', currentProject?.name || 'No project')
 
     setLoadingDb(true)
     setDbStatus('🔄 Đang kết nối với database...')
 
     try {
-      const url = localStorage.getItem('supabase:url')
-      const key = localStorage.getItem('supabase:key')
-      const table = localStorage.getItem('supabase:table') || 'products'
+      // Add timeout protection for database config loading (reduced to match SettingsService)
+      const configPromise = getDatabaseConfig()
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Database config loading timed out after 6 seconds')), 6000)
+      )
 
-      console.log('🗃️ Database config:')
+      const { url, key, table } = await Promise.race([configPromise, timeoutPromise]) as { url: string, key: string, table: string }
+
+      console.log('🗃️ Database config loaded:')
       console.log('- URL:', url ? `${url.substring(0, 30)}...` : 'Not found')
-      console.log('- Table:', table)
+      console.log('- Key:', key ? `${key.substring(0, 20)}...` : 'Not found')
+      console.log('- Table:', table || 'Not specified')
 
       if (!url || !key) {
-        const errorMsg = 'no saved supabase credentials'
+        const errorMsg = 'No database credentials found. Please configure in Admin Settings or check environment variables.'
         setDbStatus(`❌ ${errorMsg}`)
         console.error('❌ Missing credentials')
+        console.error('❌ URL exists:', !!url)
+        console.error('❌ Key exists:', !!key)
+        setLoadingDb(false)
+        return
+      }
+
+      if (!table) {
+        setDbStatus('❌ No products table specified. Please configure table name in Admin Settings.')
+        console.error('❌ No table name specified')
         setLoadingDb(false)
         return
       }
@@ -291,13 +396,20 @@ export default function ProductsPage({ data, refreshKey }: Props) {
       console.log('📊 Fetching complete product data...')
       setDbStatus('📊 Loading all product data...')
 
-      // Enhanced query with safe field selection and ordering
-      console.log('🔍 Using safe query with * selector to avoid column errors...')
-      const { data: d, error, count } = await supa
+      // Enhanced query with timeout protection
+      console.log('🔍 Using safe query with timeout protection...')
+
+      const queryPromise = supa
         .from(table)
         .select('*', { count: 'exact' })
         .order('updated_at', { ascending: false })
         .limit(2000) // Increased limit for comprehensive loading
+
+      const queryTimeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Database query timed out after 30 seconds')), 30000)
+      )
+
+      const { data: d, error, count } = await Promise.race([queryPromise, queryTimeoutPromise]) as any
 
       if (error) {
         console.error('❌ Database query error:', error)
@@ -353,16 +465,16 @@ export default function ProductsPage({ data, refreshKey }: Props) {
 
         // Platform data analysis with safe field access
         const platformStats = {
-          shopee: d.filter(p => p.link_shopee).length,
-          tiktok: d.filter(p => p.link_tiktok).length,
-          tiki: d.filter(p => p.link_tiki).length,
-          lazada: d.filter(p => p.link_lazada).length,
-          dmx: d.filter(p => p.link_dmx).length,
-          withImages: d.filter(p => p.image_url).length,
-          withDescriptions: d.filter(p => p.description || p.desc || p.product_description).length,
-          withCategories: d.filter(p => p.category || p.categories).length,
-          inStock: d.filter(p => !p.het_hang).length,
-          outOfStock: d.filter(p => p.het_hang).length
+          shopee: d.filter((p: any) => p.link_shopee).length,
+          tiktok: d.filter((p: any) => p.link_tiktok).length,
+          tiki: d.filter((p: any) => p.link_tiki).length,
+          lazada: d.filter((p: any) => p.link_lazada).length,
+          dmx: d.filter((p: any) => p.link_dmx).length,
+          withImages: d.filter((p: any) => p.image_url).length,
+          withDescriptions: d.filter((p: any) => p.description || p.desc || p.product_description).length,
+          withCategories: d.filter((p: any) => p.category || p.categories).length,
+          inStock: d.filter((p: any) => !p.het_hang).length,
+          outOfStock: d.filter((p: any) => p.het_hang).length
         }
 
         console.log('🛒 Platform link distribution:')
@@ -398,9 +510,9 @@ export default function ProductsPage({ data, refreshKey }: Props) {
       // Data quality assessment
       let qualityNote = ''
       if (d && d.length > 0) {
-        const withPlatformLinks = d.filter(p => p.link_shopee || p.link_tiktok || p.link_tiki || p.link_lazada || p.link_dmx).length
+        const withPlatformLinks = d.filter((p: any) => p.link_shopee || p.link_tiktok || p.link_tiki || p.link_lazada || p.link_dmx).length
         const linkCoverage = (withPlatformLinks / d.length) * 100
-        const withImages = d.filter(p => p.image_url).length
+        const withImages = d.filter((p: any) => p.image_url).length
         const imageCoverage = (withImages / d.length) * 100
 
         if (linkCoverage < 50) {
@@ -413,6 +525,7 @@ export default function ProductsPage({ data, refreshKey }: Props) {
       }
 
       setDbStatus(`✅ Loaded ${loadedCount} products with complete data${qualityNote}`)
+      setHasInitialized(true) // Mark as initialized
 
       console.log('🎉 Data loading completed successfully!')
       console.log('='.repeat(60))
@@ -439,28 +552,46 @@ export default function ProductsPage({ data, refreshKey }: Props) {
 
     } finally {
       setLoadingDb(false)
+      setHasInitialized(true) // Always mark as initialized, even on error
       console.log('🏁 Database fetch process completed')
     }
   }
 
 
-  // Auto-load data on mount
+  // Auto-load data on mount (only once) - wait for project to be ready
   useEffect(() => {
-    if (!dbRows && !loadingDb) {
+    // Only fetch when:
+    // 1. Not initialized yet
+    // 2. Not currently loading
+    // 3. Project context is ready (not loading)
+    // 4. Have a current project
+    if (!hasInitialized && !loadingDb && !projectLoading && currentProject) {
+      console.log('🚀 ProductsPage: Conditions met - fetching data from database')
+      console.log('📍 Current project:', currentProject.name)
       fetchFromDb()
+    } else {
+      const reasons = []
+      if (hasInitialized) reasons.push('already initialized')
+      if (loadingDb) reasons.push('db loading')
+      if (projectLoading) reasons.push('project loading')
+      if (!currentProject) reasons.push('no project')
+
+      if (reasons.length > 0) {
+        console.log('⏳ ProductsPage: Waiting to fetch data -', reasons.join(', '))
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [hasInitialized, loadingDb, projectLoading, currentProject])
 
   // Refresh data when refreshKey changes (after sync operations)
   useEffect(() => {
     if (refreshKey && refreshKey > 0) {
       console.log('🔄 refreshKey changed to:', refreshKey, '- clearing current data and fetching fresh from DB')
-      // Clear current data first to force re-render
+      // Clear current data and reset initialization flag
       setDbRows([])
       setDbStatus('🔄 Refreshing data after sync...')
-      // Then fetch fresh data from database
-      fetchFromDb()
+      setHasInitialized(false) // Reset to trigger fresh fetch
+      // fetchFromDb will be called by the first useEffect when hasInitialized becomes false
     }
   }, [refreshKey])
 
@@ -627,12 +758,10 @@ export default function ProductsPage({ data, refreshKey }: Props) {
     let dbUpdateSuccess = false
     
     try {
-      const url = localStorage.getItem('supabase:url')
-      const key = localStorage.getItem('supabase:key')
-      const table = localStorage.getItem('supabase:table') || 'products'
-      
+      const { url, key, table } = await getDatabaseConfig()
+
       if (!url || !key) {
-        setDbStatus('No Supabase credentials')
+        setDbStatus('No database credentials found. Please configure in Admin Settings.')
         setIsUpdating(false)
         return
       }
@@ -799,7 +928,8 @@ export default function ProductsPage({ data, refreshKey }: Props) {
             linkDmx: editedProduct.link_dmx || '',
             giaDmx: editedProduct.gia_dmx || 0,
             linkTiki: editedProduct.link_tiki || '',
-            giaTiki: editedProduct.gia_tiki || 0
+            giaTiki: editedProduct.gia_tiki || 0,
+            hetHang: editedProduct.het_hang
           }
 
           const wooSuccess = await updateProductInWooCommerce(productData)
@@ -837,10 +967,8 @@ export default function ProductsPage({ data, refreshKey }: Props) {
       
       if (syncedData) {
         // Update local database with synced data
-        const url = localStorage.getItem('supabase:url')
-        const key = localStorage.getItem('supabase:key')
-        const table = localStorage.getItem('supabase:table') || 'products'
-        
+        const { url, key, table } = await getDatabaseConfig()
+
         if (url && key) {
           const supa = createClient(url, key)
           
@@ -906,6 +1034,21 @@ export default function ProductsPage({ data, refreshKey }: Props) {
         return newSet
       })
     }
+  }
+
+  // Show global loading state when project is loading
+  if (projectLoading) {
+    return (
+      <div className="neo-card">
+        <div className="flex items-center justify-center py-12">
+          <div className="text-center">
+            <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+            <h2 className="text-lg font-medium text-gray-800 mb-2">Loading Project...</h2>
+            <p className="text-gray-600">Please wait while we load your project data</p>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -978,7 +1121,8 @@ export default function ProductsPage({ data, refreshKey }: Props) {
                       'dmx': 'Điện máy xanh (Link + Giá)',
                       'tiki': 'Tiki (Link + Giá)',
                       'external_url': 'URL ngoài',
-                      'currency': 'Tiền tệ'
+                      'currency': 'Tiền tệ',
+                      'het_hang': 'Trạng thái kho'
                     }
                     return fieldLabels[f as keyof typeof fieldLabels] || f.replace('_', ' ')
                   })()}
@@ -1097,6 +1241,13 @@ export default function ProductsPage({ data, refreshKey }: Props) {
               </span>
             )}
           </button>
+          <button
+            className="px-3 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700 text-sm"
+            onClick={testDatabaseConnection}
+            disabled={loadingDb}
+          >
+            🧪 Test DB Connection
+          </button>
         </div>
         
         <div className="flex items-center gap-2 flex-wrap">
@@ -1114,10 +1265,18 @@ export default function ProductsPage({ data, refreshKey }: Props) {
             </div>
           )}
           {!dbRows && !loadingDb && !dbStatus && (
-            <div className="px-3 py-2 bg-gray-100 text-gray-600 rounded text-sm border">
-              💡 Click "🔄 Refresh All Data from DB" to load complete product data
+            <div className="px-3 py-2 bg-blue-50 text-blue-700 rounded text-sm border border-blue-200">
+              💡 Click "🔄 Refresh All Data from DB" to load complete product data from your current project
             </div>
           )}
+          {projectLoading && (
+            <div className="px-3 py-2 bg-yellow-50 text-yellow-700 rounded text-sm border border-yellow-200">
+              ⏳ Loading project data, please wait...
+            </div>
+          )}
+          <div className="px-3 py-2 bg-gray-50 text-gray-700 rounded text-xs border border-gray-200">
+            🔧 Debug: Project={currentProject?.name || 'None'} | ProjectLoading={projectLoading.toString()} | HasInit={hasInitialized.toString()} | DbLoading={loadingDb.toString()}
+          </div>
           {dbRows && dbRows.length > 0 && !loadingDb && (
             <div className="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-xs border border-indigo-200">
               📊 Dataset: {dbRows.length} products loaded with full details
@@ -1192,7 +1351,8 @@ export default function ProductsPage({ data, refreshKey }: Props) {
                           'dmx': 'Điện máy xanh',
                           'tiki': 'Tiki',
                           'external_url': 'URL ngoài',
-                          'currency': 'Tiền tệ'
+                          'currency': 'Tiền tệ',
+                          'het_hang': 'Trạng thái kho'
                         }
                         return fieldLabels[f as keyof typeof fieldLabels] || f.replace('_', ' ')
                       })()}
@@ -1264,7 +1424,7 @@ export default function ProductsPage({ data, refreshKey }: Props) {
                               'dmx': { icon: '🔌', color: 'text-green-600', bg: 'bg-green-50', name: 'DMX' }
                             }
 
-                            const config = platformConfig[f] || { icon: '🔗', color: 'text-blue-600', bg: 'bg-blue-50', name: f.toUpperCase() }
+                            const config = platformConfig[f as keyof typeof platformConfig] || { icon: '🔗', color: 'text-blue-600', bg: 'bg-blue-50', name: f.toUpperCase() }
 
                             if (!link && !price) {
                               return (
@@ -1472,12 +1632,28 @@ export default function ProductsPage({ data, refreshKey }: Props) {
                             )
                           }
                           
+                          // Handle het_hang as stock status display
+                          if (f === 'het_hang') {
+                            const { isOutOfStock, isInStock } = getStockStatus(value)
+                            return (
+                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                isOutOfStock
+                                  ? 'bg-red-100 text-red-700'
+                                  : isInStock
+                                  ? 'bg-green-100 text-green-700'
+                                  : 'bg-gray-100 text-gray-600'
+                              }`}>
+                                {isOutOfStock ? '❌ Hết hàng' : isInStock ? '✅ Còn hàng' : '⚪ Chưa set'}
+                              </span>
+                            )
+                          }
+
                           // Handle external_url as clickable text link
                           if (f === 'external_url' && value) {
                             return (
-                              <a 
-                                href={value} 
-                                target="_blank" 
+                              <a
+                                href={value}
+                                target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-blue-600 hover:text-blue-800 hover:underline text-sm"
                                 title={value}
@@ -1629,6 +1805,19 @@ export default function ProductsPage({ data, refreshKey }: Props) {
                                       onChange={(e) => handleFieldChange(field, parseInt(e.target.value) || 0)}
                                       placeholder="0"
                                     />
+                                  ) : field === 'het_hang' ? (
+                                    <select
+                                      className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                      value={editedProduct[field] === true ? 'true' : editedProduct[field] === false ? 'false' : ''}
+                                      onChange={(e) => {
+                                        const value = e.target.value === 'true' ? true : e.target.value === 'false' ? false : null
+                                        handleFieldChange(field, value)
+                                      }}
+                                    >
+                                      <option value="">Chưa set</option>
+                                      <option value="false">Còn hàng</option>
+                                      <option value="true">Hết hàng</option>
+                                    </select>
                                   ) : (
                                     <input
                                       type="text"
@@ -1684,6 +1873,14 @@ export default function ProductsPage({ data, refreshKey }: Props) {
           </tbody>
         </table>
       </div>
+    </div>
+
+    {/* Product Management Tools - Only in Products Page */}
+    <div className="mt-6">
+      <ProductManagementCenter
+        onSyncComplete={onSyncComplete || handleReloadProducts}
+        onReloadProducts={onReloadProducts || handleReloadProducts}
+      />
     </div>
   </div>
   )

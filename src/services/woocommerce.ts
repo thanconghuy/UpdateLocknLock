@@ -236,8 +236,8 @@ export class WooCommerceService {
       
       // Determine button text based on the external URL
       const url = productData.externalUrl.toLowerCase()
-      let buttonText = 'Mua ngay'
-      
+      let buttonText = 'Đặt mua giá tốt'
+
       if (url.includes('shopee.vn') || url.includes('shopee.com')) {
         buttonText = 'Mua tại Shopee'
       } else if (url.includes('tiktok.com') || url.includes('tiktokshop')) {
