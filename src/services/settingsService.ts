@@ -4,8 +4,7 @@ import { createClient } from '@supabase/supabase-js'
 interface DatabaseConfig {
   supabase_url: string
   supabase_anon_key: string
-  default_products_table: string
-  default_audit_table: string
+  // Table names are now hardcoded to products_new and product_updates for consistency
 }
 
 interface WooCommerceConfig {
@@ -20,8 +19,11 @@ interface WooCommerceConfig {
 
 interface SystemSettings {
   id: string
-  category: 'database' | 'woocommerce'
-  config_data: any
+  key: string
+  value: any
+  description?: string
+  category: string
+  is_public: boolean
   created_at: string
   updated_at: string
   created_by?: string
@@ -73,8 +75,8 @@ class SettingsService {
           console.log('SettingsService: Querying system_settings table')
           const { data, error } = await supabase
             .from('system_settings')
-            .select('config_data')
-            .eq('category', 'database')
+            .select('value')
+            .eq('key', 'database_config')
             .order('updated_at', { ascending: false })
             .limit(1)
 
@@ -108,8 +110,8 @@ class SettingsService {
 
           console.log('SettingsService: Query successful, data:', data ? `Found ${data.length} records` : 'Empty')
 
-          if (data && data.length > 0 && data[0].config_data) {
-            const decryptedData = await this.decryptData(data[0].config_data)
+          if (data && data.length > 0 && data[0].value) {
+            const decryptedData = await this.decryptData(data[0].value)
             console.log('Database config decrypted successfully:', decryptedData ? 'Found' : 'Empty')
             resolve(decryptedData)
           } else {
@@ -122,12 +124,12 @@ class SettingsService {
         }
       })
 
-      // Add timeout (5 seconds for faster failure)
+      // Add timeout (3 seconds - reduced since we have hardcoded fallbacks)
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => {
-          console.error('⏰ SettingsService: getDatabaseConfig timeout after 5 seconds')
-          reject(new Error('Database config loading timed out after 5 seconds. Check database connection.'))
-        }, 5000)
+          console.warn('⏰ SettingsService: getDatabaseConfig timeout after 3 seconds - using hardcoded defaults')
+          reject(new Error('Database config loading timed out. Using hardcoded defaults.'))
+        }, 3000)
       })
 
       const result = await Promise.race([configFetch, timeoutPromise])
@@ -135,8 +137,8 @@ class SettingsService {
       return result as DatabaseConfig | null
 
     } catch (error: any) {
-      console.error('SettingsService: Exception in getDatabaseConfig:', error)
-      throw error
+      console.warn('SettingsService: getDatabaseConfig failed, using fallback - this is normal if system_settings table is not set up')
+      return null // Return null to use fallback config
     }
   }
 
@@ -151,11 +153,11 @@ class SettingsService {
     const { error } = await supabase
       .from('system_settings')
       .upsert({
-        category: 'database',
-        config_data: encryptedData,
+        key: 'database_config',
+        value: encryptedData,
         updated_at: new Date().toISOString()
       }, {
-        onConflict: 'category'
+        onConflict: 'key'
       })
 
     if (error) {
@@ -182,7 +184,7 @@ class SettingsService {
         try {
           // Try to query the products table with a simple query
           const { data, error } = await testClient
-            .from(config.default_products_table)
+            .from('products_new') // Hardcoded for consistency
             .select('id')
             .limit(1)
 
@@ -226,8 +228,8 @@ class SettingsService {
 
       const { data, error } = await supabase
         .from('system_settings')
-        .select('config_data')
-        .eq('category', 'woocommerce')
+        .select('value')
+        .eq('key', 'woocommerce_config')
         .order('updated_at', { ascending: false })
         .limit(1)
 
@@ -248,8 +250,8 @@ class SettingsService {
         return null
       }
 
-      if (data && data.length > 0 && data[0].config_data) {
-        return await this.decryptData(data[0].config_data)
+      if (data && data.length > 0 && data[0].value) {
+        return await this.decryptData(data[0].value)
       }
 
       return null
@@ -270,11 +272,11 @@ class SettingsService {
     const { error } = await supabase
       .from('system_settings')
       .upsert({
-        category: 'woocommerce',
-        config_data: encryptedData,
+        key: 'woocommerce_config',
+        value: encryptedData,
         updated_at: new Date().toISOString()
       }, {
-        onConflict: 'category'
+        onConflict: 'key'
       })
 
     if (error) {
@@ -394,9 +396,8 @@ class SettingsService {
     // Check environment variables
     const envDbConfig = {
       supabase_url: import.meta.env.VITE_SUPABASE_URL || '',
-      supabase_anon_key: import.meta.env.VITE_SUPABASE_ANON_KEY || '',
-      default_products_table: import.meta.env.VITE_DEFAULT_PRODUCTS_TABLE || 'products',
-      default_audit_table: import.meta.env.VITE_DEFAULT_AUDIT_TABLE || 'product_updates'
+      supabase_anon_key: import.meta.env.VITE_SUPABASE_ANON_KEY || ''
+      // Table names are now hardcoded to products_new and product_updates for consistency
     }
 
     const envWooConfig = {

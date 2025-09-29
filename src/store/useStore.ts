@@ -1,6 +1,7 @@
 import create from 'zustand'
 import type { ProductData, UpdateLog } from '../types'
-import { wooCommerceService } from '../services/woocommerce'
+import type { Project } from '../types/project'
+import { WooCommerceService } from '../services/woocommerce'
 
 type State = {
   products: ProductData[]
@@ -8,8 +9,10 @@ type State = {
   updateLogs: UpdateLog[]
   setUpdateLogs: (logs: UpdateLog[]) => void
   addUpdateLog: (log: UpdateLog) => void
-  updateProductInWooCommerce: (product: ProductData) => Promise<boolean>
-  syncProductFromWooCommerce: (websiteId: string, productId: string) => Promise<ProductData | null>
+  updateProductInWooCommerce: (product: ProductData, project: Project) => Promise<boolean>
+  syncProductFromWooCommerce: (websiteId: string, productId: string, project: Project) => Promise<ProductData | null>
+  // 🔄 Project switching support
+  clearStoreForProjectSwitch: () => void
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -20,7 +23,7 @@ export const useStore = create<State>((set, get) => ({
   addUpdateLog: (log) => set((state) => ({ 
     updateLogs: [log, ...state.updateLogs] 
   })),
-  updateProductInWooCommerce: async (product) => {
+  updateProductInWooCommerce: async (product, project) => {
     if (!product.websiteId) {
       const errorLog: UpdateLog = {
         id: Date.now().toString(),
@@ -37,7 +40,7 @@ export const useStore = create<State>((set, get) => ({
     }
 
     try {
-      const success = await wooCommerceService.updateProduct(product.websiteId, product)
+      const success = await WooCommerceService.updateProduct(product.websiteId, product, project)
       
       const log: UpdateLog = {
         id: Date.now().toString(),
@@ -69,9 +72,9 @@ export const useStore = create<State>((set, get) => ({
     }
   },
   
-  syncProductFromWooCommerce: async (websiteId: string, productId: string) => {
+  syncProductFromWooCommerce: async (websiteId: string, productId: string, project: Project) => {
     try {
-      const productData = await wooCommerceService.getProduct(websiteId)
+      const productData = await WooCommerceService.syncProductFromWooCommerce(websiteId, productId, project)
       
       if (productData) {
         // Set the correct internal ID
@@ -120,5 +123,15 @@ export const useStore = create<State>((set, get) => ({
       get().addUpdateLog(errorLog)
       return null
     }
+  },
+
+  // 🔄 Clear store when switching projects to prevent data contamination
+  clearStoreForProjectSwitch: () => {
+    console.log('🧹 Clearing Zustand store for project switch...')
+    set({
+      products: [],
+      updateLogs: []
+    })
+    console.log('✅ Store cleared')
   }
 }))

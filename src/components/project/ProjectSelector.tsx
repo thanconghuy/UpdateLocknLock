@@ -23,7 +23,7 @@ export default function ProjectSelector() {
     woocommerce_base_url: '',
     woocommerce_consumer_key: '',
     woocommerce_consumer_secret: '',
-    products_table: 'products',
+    products_table: 'products_new',
     audit_table: 'product_updates'
   })
 
@@ -47,7 +47,7 @@ export default function ProjectSelector() {
           woocommerce_base_url: '',
           woocommerce_consumer_key: '',
           woocommerce_consumer_secret: '',
-          products_table: 'products',
+          products_table: 'products_new',
           audit_table: 'product_updates'
         })
       }
@@ -277,33 +277,7 @@ export default function ProjectSelector() {
                   />
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Products Table
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.products_table}
-                      onChange={(e) => setFormData(prev => ({ ...prev, products_table: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="products"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Audit Table
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.audit_table}
-                      onChange={(e) => setFormData(prev => ({ ...prev, audit_table: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="product_updates"
-                    />
-                  </div>
-                </div>
+                {/* Database Configuration removed - now hardcoded to use products_new and product_updates for consistency */}
 
                 <div className="flex justify-end space-x-3 pt-4">
                   <button

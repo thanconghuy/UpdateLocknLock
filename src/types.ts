@@ -31,6 +31,33 @@ export interface ProductData {
   updatedAt?: string
 }
 
+// New database format (snake_case)
+export interface ProductDataDB {
+  id: string
+  project_id?: number
+  website_id?: string
+  title?: string
+  price?: number
+  promotional_price?: number | null
+  sku?: string
+  category?: string
+  image_url?: string
+  external_url?: string
+  het_hang?: boolean
+  link_shopee?: string
+  gia_shopee?: number | null
+  link_tiktok?: string
+  gia_tiktok?: number | null
+  link_lazada?: string
+  gia_lazada?: number | null
+  link_dmx?: string
+  gia_dmx?: number | null
+  link_tiki?: string
+  gia_tiki?: number | null
+  created_at?: string
+  updated_at?: string
+}
+
 export interface UpdateLog {
   id: string
   productId: string

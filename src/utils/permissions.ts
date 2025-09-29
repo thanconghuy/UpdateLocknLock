@@ -62,6 +62,36 @@ export const DEFAULT_PERMISSIONS: Record<UserRole, RolePermissions> = {
     maxTeamMembers: 5,
   },
 
+  [UserRole.EDITOR]: {
+    // System permissions
+    canManageUsers: false,
+    canManageSettings: false,
+    canViewAllLogs: false,
+    canManageSystem: false,
+
+    // Project permissions
+    canCreateProjects: false,
+    canDeleteProjects: false,
+    canViewAllProjects: false,
+    canManageOwnProjects: false,
+    canManageProjectMembers: false,
+
+    // Product permissions
+    canEditProducts: true,
+    canImportData: true,
+    canExportData: true,
+    canViewProducts: true,
+
+    // Report permissions
+    canViewAllReports: false,
+    canViewOwnReports: true,
+    canExportReports: false,
+
+    // Limits
+    maxProjects: 0,
+    maxTeamMembers: 0,
+  },
+
   [UserRole.PRODUCT_EDITOR]: {
     // System permissions
     canManageUsers: false,
@@ -165,7 +195,8 @@ export class PermissionChecker {
 
   private getUserPermissions(): RolePermissions {
     // Nếu user có custom permissions, merge với default
-    const defaultPerms = DEFAULT_PERMISSIONS[this.userProfile.role]
+    const role = this.userProfile.role as UserRole || UserRole.VIEWER
+    const defaultPerms = DEFAULT_PERMISSIONS[role]
     const customPerms = this.userProfile.permissions || {}
 
     return {

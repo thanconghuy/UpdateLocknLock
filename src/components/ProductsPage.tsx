@@ -7,9 +7,10 @@ import ProductManagementCenter from './ProductManagementCenter'
 import { useSettingsService } from '../services/settingsService'
 import { useProject } from '../contexts/ProjectContext'
 import { ENV } from '../config/env'
+import NoActiveProjectBanner from './project/NoActiveProjectBanner'
 
 interface Props {
-  data: ProductData[]
+  data?: ProductData[]
   refreshKey?: number
   onSyncComplete?: () => void
   onReloadProducts?: () => void
@@ -51,9 +52,9 @@ function getStockStatus(hetHangValue: any) {
 }
 
 export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloadProducts }: Props) {
-  const { updateProductInWooCommerce, syncProductFromWooCommerce } = useStore()
+  const { updateProductInWooCommerce, syncProductFromWooCommerce, clearStoreForProjectSwitch } = useStore()
   const settingsService = useSettingsService()
-  const { currentProject, loading: projectLoading } = useProject()
+  const { currentProject, loading: projectLoading, setShowProjectSelector } = useProject()
   const [visibleFields, setVisibleFields] = useState<string[]>(ALL_FIELDS.filter(f => f !== 'updated_at'))
   const [filter, setFilter] = useState<{ platform?: string, recentlyUpdated?: boolean, timeFilter?: string, stockStatus?: 'instock' | 'outofstock', syncStatus?: string }>({})
   const [searchQuery, setSearchQuery] = useState<string>('')
@@ -74,28 +75,44 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
   const getDatabaseConfig = async () => {
     try {
       console.log('🔍 Loading database config from admin settings...')
-      const adminConfig = await settingsService.getDatabaseConfig()
+
+      // Add timeout protection for settingsService call
+      const configPromise = settingsService.getDatabaseConfig()
+      const quickTimeoutPromise = new Promise<null>((_, reject) =>
+        setTimeout(() => reject(new Error('SettingsService timeout - using fallback')), 3000)
+      )
+
+      const adminConfig = await Promise.race([configPromise, quickTimeoutPromise])
+
       if (adminConfig && adminConfig.supabase_url && adminConfig.supabase_anon_key) {
         console.log('✅ Using admin settings config')
+
+        // 🔧 Always use products_new for consistency and project isolation
+        const tableName = 'products_new'
+        console.log(`📋 Using table: ${tableName} (${currentProject ? 'project-specific' : 'default'})`)
+
         return {
           url: adminConfig.supabase_url,
           key: adminConfig.supabase_anon_key,
-          table: adminConfig.default_products_table || 'products'
+          table: tableName
         }
       } else if (adminConfig === null) {
         console.log('ℹ️ No admin config found (user not authenticated or no config), using fallback')
       } else {
         console.log('⚠️ Admin config incomplete, using fallback')
       }
-    } catch (error) {
-      console.warn('❌ Could not load admin config, using fallback:', error)
+    } catch (error: any) {
+      console.warn('❌ SettingsService failed (timeout or error), using fallback:', error?.message || error)
     }
 
-    // Fallback to localStorage and ENV
+    // Always use products_new for consistency and project isolation
+    const fallbackTableName = 'products_new'
+    console.log(`📋 Fallback using table: ${fallbackTableName} (${currentProject ? 'project-specific' : 'global fallback'})`)
+
     const fallbackConfig = {
       url: localStorage.getItem('supabase:url') || ENV.SUPABASE_URL,
       key: localStorage.getItem('supabase:key') || ENV.SUPABASE_ANON_KEY,
-      table: localStorage.getItem('supabase:table') || ENV.DEFAULT_PRODUCTS_TABLE || 'products'
+      table: fallbackTableName
     }
 
     console.log('🔄 Using fallback config:', {
@@ -399,11 +416,19 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
       // Enhanced query with timeout protection
       console.log('🔍 Using safe query with timeout protection...')
 
-      const queryPromise = supa
-        .from(table)
-        .select('*', { count: 'exact' })
-        .order('updated_at', { ascending: false })
-        .limit(2000) // Increased limit for comprehensive loading
+      // Add project isolation for multi-tenant data
+      const queryPromise = currentProject
+        ? supa
+            .from(table)
+            .select('*', { count: 'exact' })
+            .eq('project_id', currentProject.project_id)
+            .order('updated_at', { ascending: false })
+            .limit(2000) // Increased limit for comprehensive loading
+        : supa
+            .from(table)
+            .select('*', { count: 'exact' })
+            .order('updated_at', { ascending: false })
+            .limit(2000)
 
       const queryTimeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('Database query timed out after 30 seconds')), 30000)
@@ -582,6 +607,24 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasInitialized, loadingDb, projectLoading, currentProject])
+
+  // 🔄 IMPORTANT: Reset and reload data when currentProject changes (project switching)
+  useEffect(() => {
+    if (currentProject && !projectLoading) {
+      console.log('🔄 ProductsPage: Current project changed, resetting data and reloading...')
+      console.log('📍 New project:', currentProject.name)
+      console.log('📋 New products table:', currentProject.products_table)
+
+      // 🧹 Clear Zustand store to prevent data contamination between projects
+      clearStoreForProjectSwitch()
+
+      // Reset component state to trigger fresh fetch from the new project's table
+      setDbRows([])
+      setDbStatus('🔄 Switching project - loading data...')
+      setHasInitialized(false) // Reset to trigger fresh fetch
+      // fetchFromDb will be called by the first useEffect when hasInitialized becomes false
+    }
+  }, [currentProject?.id, currentProject?.products_table, clearStoreForProjectSwitch]) // Track project ID and table changes
 
   // Refresh data when refreshKey changes (after sync operations)
   useEffect(() => {
@@ -775,12 +818,21 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
       const supa = createClient(url, key)
       console.log('Sending update to Supabase:', { table, id: editedProduct.id, data: editedProduct })
       
-      // First, verify the product exists
-      const { data: existingProduct, error: checkError } = await supa
-        .from(table)
-        .select('id, sku')
-        .eq('id', editedProduct.id)
-        .single()
+      // First, verify the product exists with project isolation
+      const existenceQuery = currentProject
+        ? supa
+            .from(table)
+            .select('id, sku')
+            .eq('id', editedProduct.id)
+            .eq('project_id', currentProject.project_id)
+            .single()
+        : supa
+            .from(table)
+            .select('id, sku')
+            .eq('id', editedProduct.id)
+            .single()
+
+      const { data: existingProduct, error: checkError } = await existenceQuery
       
       console.log('Product existence check:', { existingProduct, checkError })
       
@@ -805,12 +857,21 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
 
       console.log('Update data being sent:', updateData)
 
-      // Update the product
-      const { error, data: updateResult } = await supa
-        .from(table)
-        .update(updateData)
-        .eq('id', editedProduct.id)
-        .select() // Return updated data
+      // Update the product with project isolation
+      const updateQuery = currentProject
+        ? supa
+            .from(table)
+            .update(updateData)
+            .eq('id', editedProduct.id)
+            .eq('project_id', currentProject.project_id)
+            .select()
+        : supa
+            .from(table)
+            .update(updateData)
+            .eq('id', editedProduct.id)
+            .select()
+
+      const { error, data: updateResult } = await updateQuery
 
       console.log('Update result:', { error, updateResult })
 
@@ -932,7 +993,14 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
             hetHang: editedProduct.het_hang
           }
 
-          const wooSuccess = await updateProductInWooCommerce(productData)
+          if (!currentProject) {
+            console.error('❌ No current project for WooCommerce update')
+            setDbStatus('❌ Error: No project selected')
+            setIsUpdating(false)
+            return
+          }
+
+          const wooSuccess = await updateProductInWooCommerce(productData, currentProject)
           
           if (wooSuccess) {
             setDbStatus('✅ Updated database & WooCommerce successfully!')
@@ -963,7 +1031,12 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
     setSyncingProducts(prev => new Set(prev).add(productKey))
     
     try {
-      const syncedData = await syncProductFromWooCommerce(product.website_id, product.id)
+      if (!currentProject) {
+        console.error('❌ No current project for WooCommerce sync')
+        return
+      }
+
+      const syncedData = await syncProductFromWooCommerce(product.website_id, product.id, currentProject)
       
       if (syncedData) {
         // Update local database with synced data
@@ -991,10 +1064,19 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
             updated_at: new Date().toISOString()
           }
           
-          const { error } = await supa
-            .from(table)
-            .update(updateData)
-            .eq('id', product.id)
+          // Update with project isolation
+          const syncUpdateQuery = currentProject
+            ? supa
+                .from(table)
+                .update(updateData)
+                .eq('id', product.id)
+                .eq('project_id', currentProject.project_id)
+            : supa
+                .from(table)
+                .update(updateData)
+                .eq('id', product.id)
+
+          const { error } = await syncUpdateQuery
           
           if (!error) {
             // Update local data
@@ -1051,10 +1133,29 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
     )
   }
 
+  // Check if current project is invalid (deleted or inactive)
+  const isProjectInvalid = currentProject && (
+    !!currentProject.deleted_at || !currentProject.is_active
+  )
+
   return (
     <div className="neo-card">
-      {/* Top row: filters and counters */}
-      <div className="mb-4 space-y-3">
+      {/* Show warning banner if no active project */}
+      {(!currentProject || isProjectInvalid) && (
+        <NoActiveProjectBanner
+          onManageProjects={() => setShowProjectSelector(true)}
+        />
+      )}
+
+      {/* Don't show main content if no valid project */}
+      {!currentProject || isProjectInvalid ? (
+        <div className="text-center py-12 text-gray-500">
+          <p>Vui lòng chọn project hoạt động để xem danh sách sản phẩm.</p>
+        </div>
+      ) : (
+        <>
+          {/* Top row: filters and counters */}
+          <div className="mb-4 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Products ({rows.length} shown / {filteredRows.length} filtered / {dbRows?.length || 0} total)</h2>
           <div className="text-sm text-gray-600">
@@ -1875,13 +1976,15 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
       </div>
     </div>
 
-    {/* Product Management Tools - Only in Products Page */}
-    <div className="mt-6">
-      <ProductManagementCenter
-        onSyncComplete={onSyncComplete || handleReloadProducts}
-        onReloadProducts={onReloadProducts || handleReloadProducts}
-      />
+          {/* Product Management Tools - Only in Products Page */}
+          <div className="mt-6">
+            <ProductManagementCenter
+              onSyncComplete={onSyncComplete || handleReloadProducts}
+              onReloadProducts={onReloadProducts || handleReloadProducts}
+            />
+          </div>
+        </>
+      )}
     </div>
-  </div>
   )
 }

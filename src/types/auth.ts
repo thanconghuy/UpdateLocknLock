@@ -1,26 +1,29 @@
 export enum UserRole {
   ADMIN = 'admin',           // Quản lý toàn hệ thống
   MANAGER = 'manager',       // Quản lý projects và team
-  PRODUCT_EDITOR = 'product_editor',  // Chỉnh sửa sản phẩm
-  PROJECT_VIEWER = 'project_viewer',  // Xem project (read-only)
-  VIEWER = 'viewer'          // Xem cơ bản
+  EDITOR = 'editor',         // Chỉnh sửa sản phẩm
+  VIEWER = 'viewer',         // Xem cơ bản
+  PRODUCT_EDITOR = 'product_editor',  // Chỉnh sửa sản phẩm (specific)
+  PROJECT_VIEWER = 'project_viewer'   // Xem project (specific)
 }
 
 export interface UserProfile {
   id: string
   email: string
   full_name?: string
-  role: UserRole
+  primary_role_id?: string
+  role?: string // Computed field from roles system
   created_at: string
   updated_at: string
   is_active: boolean
   max_projects?: number
   max_team_members?: number
-  permissions?: Record<string, any>
+  permissions?: string[] // Array of permission names
   last_active_at?: string
   is_suspended?: boolean
   suspended_reason?: string
   created_by?: string
+  last_role_sync?: string
 }
 
 export interface RolePermissions {

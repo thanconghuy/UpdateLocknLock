@@ -10,7 +10,16 @@
       "Bash(pkill:*)",
       "Bash(curl:*)",
       "Bash(npm run dev:*)",
-      "Bash(xargs rg:*)"
+      "Bash(xargs rg:*)",
+      "Bash(npx supabase db reset:*)",
+      "Bash(psql \"$VITE_SUPABASE_URL\" -c \"SELECT u.email, up.role, up.primary_role_id, r.name as role_name, r.display_name, r.level FROM auth.users u LEFT JOIN user_profiles up ON u.id = up.id LEFT JOIN roles r ON up.primary_role_id = r.id WHERE u.email = (SELECT email FROM auth.users ORDER BY created_at DESC LIMIT 1);\")",
+      "Bash(node:*)",
+      "Bash(set -a)",
+      "Bash(source .env)",
+      "Bash(set +a)",
+      "Bash(psql:*)",
+      "Bash(./cleanup_dev_files.bat)",
+      "Bash(npm install:*)"
     ],
     "deny": [],
     "ask": []

@@ -4,8 +4,8 @@ import { useProject } from '../../contexts/ProjectContext'
 import { UserRole } from '../../types/auth'
 
 interface HeaderProps {
-  route: 'dashboard' | 'import' | 'products' | 'logs' | 'admin'
-  setRoute: (route: 'dashboard' | 'import' | 'products' | 'logs' | 'admin') => void
+  route: 'dashboard' | 'import' | 'products' | 'logs' | 'admin' | 'projects'
+  setRoute: (route: 'dashboard' | 'import' | 'products' | 'logs' | 'admin' | 'projects') => void
 }
 
 export default function Header({ route, setRoute }: HeaderProps) {
@@ -32,7 +32,29 @@ export default function Header({ route, setRoute }: HeaderProps) {
     return user?.email?.split('@')[0] || 'User'
   }
 
+  // Cache admin status to survive userProfile reloads
   const isAdmin = userProfile?.role === UserRole.ADMIN
+
+  // Save admin status to localStorage when we know it
+  React.useEffect(() => {
+    if (userProfile?.role && user?.email) {
+      localStorage.setItem(`adminStatus_${user.email}`, userProfile.role)
+    }
+  }, [userProfile?.role, user?.email])
+
+  // Fallback: Use cached admin status if userProfile not loaded yet
+  const cachedRole = user?.email ? localStorage.getItem(`adminStatus_${user.email}`) : null
+  const isAdminWithFallback = isAdmin || (cachedRole === 'admin')
+
+  // Debug admin status
+  console.log('🔍 Header admin check:', {
+    userProfileLoaded: !!userProfile,
+    userRole: userProfile?.role,
+    cachedRole,
+    isAdmin,
+    isAdminWithFallback,
+    userEmail: user?.email
+  })
 
   return (
     <header className="p-4 border-b bg-white neo-panel">
@@ -97,12 +119,21 @@ export default function Header({ route, setRoute }: HeaderProps) {
                   <div className="border-t border-gray-200 pt-2">
                     <button
                       onClick={() => {
-                        setShowProjectSelector(true)
+                        setRoute('projects')
                         setShowProjectMenu(false)
                       }}
                       className="w-full text-left px-4 py-2 text-sm text-blue-600 hover:bg-blue-50"
                     >
-                      ➕ Quản lý Projects
+                      ⚙️ Quản lý Projects
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowProjectSelector(true)
+                        setShowProjectMenu(false)
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-green-600 hover:bg-green-50"
+                    >
+                      ➕ Tạo Project Mới
                     </button>
                   </div>
                 </div>
@@ -141,9 +172,15 @@ export default function Header({ route, setRoute }: HeaderProps) {
           >
             📤 Import
           </button>
+          <button
+            className={`px-3 py-1 ${route === 'projects' ? 'neo-btn primary' : 'neo-btn'}`}
+            onClick={() => setRoute('projects')}
+          >
+            🏢 Projects
+          </button>
 
           {/* Admin Settings - Only show for admin users */}
-          {isAdmin && (
+          {isAdminWithFallback && (
             <button
               className={`px-3 py-1 ${route === 'admin' ? 'neo-btn primary' : 'neo-btn'} border-red-300 text-red-700 hover:bg-red-50`}
               onClick={() => setRoute('admin')}
@@ -197,7 +234,7 @@ export default function Header({ route, setRoute }: HeaderProps) {
                 </button>
 
                 {/* Admin-only system settings */}
-                {isAdmin && (
+                {isAdminWithFallback && (
                   <button
                     onClick={() => {
                       setRoute('admin')

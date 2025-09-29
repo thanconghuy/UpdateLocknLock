@@ -1,12 +1,35 @@
 import axios from 'axios'
 import type { ProductData } from '../types'
+import type { Project } from '../types/project'
 import { parsePriceText, formatPriceToText } from '../utils/priceUtils'
 import { ENV } from '../config/env'
 
-const WOOCOMMERCE_CONFIG = {
+// Default fallback config (only used when no project is available)
+const DEFAULT_WOOCOMMERCE_CONFIG = {
   baseUrl: ENV.WOOCOMMERCE_BASE_URL,
   consumerKey: ENV.WOOCOMMERCE_CONSUMER_KEY,
   consumerSecret: ENV.WOOCOMMERCE_CONSUMER_SECRET
+}
+
+interface WooCommerceConfig {
+  baseUrl: string
+  consumerKey: string
+  consumerSecret: string
+}
+
+// Helper function to get WooCommerce config from project or fallback
+function getWooCommerceConfig(project?: Project | null): WooCommerceConfig {
+  if (project && project.woocommerce_base_url && project.woocommerce_consumer_key && project.woocommerce_consumer_secret) {
+    console.log('🔧 Using project-specific WooCommerce config:', project.name)
+    return {
+      baseUrl: project.woocommerce_base_url,
+      consumerKey: project.woocommerce_consumer_key,
+      consumerSecret: project.woocommerce_consumer_secret
+    }
+  }
+
+  console.log('⚠️ Using fallback WooCommerce config (ENV variables)')
+  return DEFAULT_WOOCOMMERCE_CONFIG
 }
 
 export type WooCommerceProduct = {
@@ -68,16 +91,34 @@ export interface GetProductsParams {
 }
 
 export class WooCommerceService {
-  private api = axios.create({
-    baseURL: `${WOOCOMMERCE_CONFIG.baseUrl}/wp-json/wc/v3`,
-    auth: {
-      username: WOOCOMMERCE_CONFIG.consumerKey,
-      password: WOOCOMMERCE_CONFIG.consumerSecret
-    },
-    headers: {
-      'Content-Type': 'application/json'
-    }
-  })
+  private project: Project | null = null
+  private api: any
+
+  constructor(project?: Project | null) {
+    this.project = project || null
+    this.api = this.createApiInstance()
+  }
+
+  private createApiInstance(): any {
+    const config = getWooCommerceConfig(this.project)
+
+    return axios.create({
+      baseURL: `${config.baseUrl}/wp-json/wc/v3`,
+      auth: {
+        username: config.consumerKey,
+        password: config.consumerSecret
+      },
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    })
+  }
+
+  // Update project and recreate API instance
+  setProject(project: Project | null) {
+    this.project = project
+    this.api = this.createApiInstance()
+  }
 
   async updateProduct(productId: string, productData: ProductData): Promise<boolean> {
     try {
@@ -329,6 +370,41 @@ export class WooCommerceService {
 
     return payload
   }
+
+  // Static helper methods for convenience
+  static async syncProductFromWooCommerce(
+    websiteId: string,
+    internalProductId: number | string,
+    project: Project
+  ): Promise<ProductData | null> {
+    const service = new WooCommerceService(project)
+    const productData = await service.getProduct(websiteId)
+
+    if (productData) {
+      // Set the correct internal ID
+      productData.id = internalProductId.toString()
+    }
+
+    return productData
+  }
+
+  static async updateProduct(
+    productId: string,
+    productData: ProductData,
+    project: Project
+  ): Promise<boolean> {
+    const service = new WooCommerceService(project)
+    return service.updateProduct(productId, productData)
+  }
+
+  static async getProducts(
+    params: GetProductsParams = {},
+    project: Project
+  ): Promise<WooCommerceProductResponse[]> {
+    const service = new WooCommerceService(project)
+    return service.getProducts(params)
+  }
 }
 
+// Export singleton instance (deprecated - use project-specific instances)
 export const wooCommerceService = new WooCommerceService()
