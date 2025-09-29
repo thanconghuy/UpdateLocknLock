@@ -11,10 +11,11 @@ interface ProjectContextType {
 
   // Actions
   setCurrentProject: (project: Project | null) => void
-  loadProjects: () => Promise<void>
+  loadProjects: (includeDeleted?: boolean) => Promise<void>
   createProject: (projectData: CreateProjectData) => Promise<Project | null>
-  updateCurrentProject: (updates: Partial<Project>) => Promise<boolean>
-  deleteProject: (projectId: string) => Promise<boolean>
+  updateProject: (updates: Partial<Project>) => Promise<boolean>
+  deleteProject: (projectId: string, permanent?: boolean) => Promise<boolean>
+  restoreProject: (projectId: string) => Promise<boolean>
   switchProject: (projectId: string) => Promise<void>
 
   // Project selection state
@@ -29,8 +30,9 @@ const ProjectContext = createContext<ProjectContextType>({
   setCurrentProject: () => {},
   loadProjects: async () => {},
   createProject: async () => null,
-  updateCurrentProject: async () => false,
+  updateProject: async () => false,
   deleteProject: async () => false,
+  restoreProject: async () => false,
   switchProject: async () => {},
   showProjectSelector: false,
   setShowProjectSelector: () => {}
@@ -56,8 +58,8 @@ export const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) =>
 
   const { user, userProfile } = useAuth()
 
-  // Load all projects for current user
-  const loadProjects = async () => {
+  // Load all projects for current user (including deleted projects for admin/manager)
+  const loadProjects = async (includeDeleted: boolean = false) => {
     if (!user?.id) {
       setProjects([])
       setCurrentProject(null)
@@ -69,8 +71,23 @@ export const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) =>
       setLoading(true)
       console.log('🔄 Loading projects for user:', user.email)
 
+      // For admin/manager users, ALWAYS include deleted projects (unless explicitly requested not to)
+      // If userProfile not loaded yet, assume admin for safety (will reload when profile loads)
+      const userRole = userProfile?.role || 'admin' // Default to admin if profile not loaded
+      const shouldIncludeDeleted = ['admin', 'manager'].includes(userRole)
+      // Admin/Manager always see deleted projects, regular users never do
+
+      console.log('🔍 ProjectContext loadProjects debug:', {
+        userRole: userProfile?.role,
+        userRoleUsed: userRole,
+        includeDeletedParam: includeDeleted,
+        shouldIncludeDeleted,
+        userEmail: user.email,
+        profileLoaded: !!userProfile
+      })
+
       // Add timeout to prevent infinite loading
-      const loadPromise = ProjectService.getUserProjects()
+      const loadPromise = ProjectService.getUserProjects(shouldIncludeDeleted)
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('Project loading timed out after 15 seconds')), 15000)
       )
@@ -79,17 +96,54 @@ export const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) =>
       setProjects(userProjects)
 
       console.log('✅ Loaded projects:', userProjects.length)
+      console.log('📋 Projects data:', userProjects.map(p => ({
+        name: p.name,
+        isActive: p.is_active,
+        deletedAt: p.deleted_at,
+        status: p.deleted_at ? 'DELETED' : 'ACTIVE'
+      })))
 
-      // Auto-select first project if none selected
+      // Check if current project is still valid (exists and not permanently deleted)
+      if (currentProject) {
+        const currentProjectUpdated = userProjects.find(p => p.id === currentProject.id)
+        if (!currentProjectUpdated || currentProjectUpdated.deleted_at) {
+          // Only clear if project is deleted or doesn't exist
+          // Allow user to stay with inactive projects for management purposes
+          console.log('⚠️ Current project deleted or not found, clearing...', currentProject.name)
+          setCurrentProject(null)
+          localStorage.removeItem('selectedProjectId')
+        } else if (!currentProjectUpdated.is_active && currentProject.is_active) {
+          // Update currentProject state to reflect new inactive status
+          console.log('📝 Current project became inactive, updating state...', currentProject.name)
+          setCurrentProject(currentProjectUpdated)
+        }
+      }
+
+      // Auto-select first ACTIVE project if none selected
       if (userProjects.length > 0 && !currentProject) {
         const savedProjectId = localStorage.getItem('selectedProjectId')
-        const projectToSelect = savedProjectId
-          ? userProjects.find(p => p.id === savedProjectId) || userProjects[0]
-          : userProjects[0]
+        let projectToSelect = null
 
-        console.log('🎯 Auto-selecting project:', projectToSelect.name)
-        setCurrentProject(projectToSelect)
-        localStorage.setItem('selectedProjectId', projectToSelect.id)
+        // Try to restore saved project if it's still active
+        if (savedProjectId) {
+          const savedProject = userProjects.find(p => p.id === savedProjectId)
+          if (savedProject && !savedProject.deleted_at && savedProject.is_active) {
+            projectToSelect = savedProject
+          }
+        }
+
+        // If no valid saved project, find first active project
+        if (!projectToSelect) {
+          projectToSelect = userProjects.find(p => !p.deleted_at && p.is_active)
+        }
+
+        if (projectToSelect) {
+          console.log('🎯 Auto-selecting project:', projectToSelect.name)
+          setCurrentProject(projectToSelect)
+          localStorage.setItem('selectedProjectId', projectToSelect.id)
+        } else {
+          console.log('⚠️ No active projects available for selection')
+        }
       }
 
       // If no projects, show project selector
@@ -139,29 +193,49 @@ export const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) =>
     }
   }
 
-  // Update current project
-  const updateCurrentProject = async (updates: Partial<Project>): Promise<boolean> => {
-    if (!currentProject) {
-      console.error('❌ No current project to update')
+  // Update any project (can be current or different project)
+  const updateProject = async (updates: Partial<Project>): Promise<boolean> => {
+    // updates.id should contain the target project ID
+    const targetProjectId = updates.id || currentProject?.id
+
+    if (!targetProjectId) {
+      console.error('❌ No project ID provided for update')
       return false
     }
 
     try {
-      console.log('🔄 Updating project:', currentProject.name)
+      // Find the target project to update (may not be currentProject!)
+      const targetProject = projects.find(p => p.id === targetProjectId)
+      if (!targetProject) {
+        console.error('❌ Target project not found:', targetProjectId)
+        return false
+      }
+
+      console.log('🔄 Updating project:', targetProject.name, 'with data:', updates)
 
       const success = await ProjectService.updateProject({
         ...updates,
-        id: currentProject.id
+        id: targetProjectId  // Use the provided ID, not currentProject.id
       })
 
       if (success) {
-        // Update current project state
-        setCurrentProject(prev => prev ? { ...prev, ...updates } : null)
+        console.log('✅ Project update successful, updating context state...')
+
+        // Only update currentProject state if we updated the current project
+        if (targetProjectId === currentProject?.id) {
+          setCurrentProject(prev => prev ? { ...prev, ...updates } : null)
+          console.log('📝 Updated current project state')
+        } else {
+          console.log('📝 Updated different project, keeping current project unchanged')
+        }
 
         // Reload projects to sync with database
+        console.log('🔄 Reloading projects after update...')
         await loadProjects()
 
         console.log('✅ Updated project successfully')
+      } else {
+        console.error('❌ Project update failed')
       }
 
       return success
@@ -171,39 +245,90 @@ export const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) =>
     }
   }
 
-  // Delete project
-  const deleteProject = async (projectId: string): Promise<boolean> => {
+  // Delete project (soft delete by default, permanent if specified)
+  const deleteProject = async (projectId: string, permanent: boolean = false): Promise<boolean> => {
     try {
-      console.log('🔄 Deleting project:', projectId)
+      console.log(`🔥 ProjectContext.deleteProject STARTING:`)
+      console.log(`   Type: ${permanent ? 'PERMANENT' : 'SOFT'} delete`)
+      console.log(`   Target ID: ${projectId}`)
+      console.log(`   Current project ID: ${currentProject?.id}`)
 
-      const success = await ProjectService.deleteProject(projectId)
+      console.log('🔄 Calling ProjectService.deleteProject...')
+      const success = await ProjectService.deleteProject(projectId, permanent)
+
+      console.log('🔍 ProjectService.deleteProject result:', success)
+
       if (!success) {
-        console.error('❌ Failed to delete project')
+        console.error('❌ ProjectService.deleteProject returned FALSE')
         return false
       }
 
+      console.log('✅ ProjectService.deleteProject returned TRUE')
+
       // If deleted project was current, clear it
       if (currentProject?.id === projectId) {
+        console.log('🧹 Clearing current project (was the deleted project)')
         setCurrentProject(null)
         localStorage.removeItem('selectedProjectId')
+      } else {
+        console.log('💭 Deleted project was not current project, keeping current')
       }
 
-      // Reload projects
+      console.log('🔄 Reloading projects after delete...')
       await loadProjects()
+      console.log('✅ Projects reloaded after delete')
 
-      console.log('✅ Deleted project successfully')
+      console.log(`🎉 ${permanent ? 'PERMANENT' : 'SOFT'} delete completed successfully`)
       return true
     } catch (error) {
-      console.error('❌ Exception deleting project:', error)
+      console.error('💥 EXCEPTION in ProjectContext.deleteProject:', error)
       return false
     }
   }
 
-  // Switch to different project
+  // Restore soft-deleted project
+  const restoreProject = async (projectId: string): Promise<boolean> => {
+    try {
+      console.log('🔄 Restoring project:', projectId)
+
+      const success = await ProjectService.restoreProject(projectId)
+      if (!success) {
+        console.error('❌ Failed to restore project')
+        return false
+      }
+
+      // Reload projects to show restored project
+      await loadProjects()
+
+      console.log('✅ Restored project successfully')
+      return true
+    } catch (error) {
+      console.error('❌ Exception restoring project:', error)
+      return false
+    }
+  }
+
+  // Switch to different project (only allow active projects)
   const switchProject = async (projectId: string) => {
     const project = projects.find(p => p.id === projectId)
     if (!project) {
       console.error('❌ Project not found:', projectId)
+      return
+    }
+
+    // Check if project is available for selection
+    const isDeleted = !!project.deleted_at
+    const isInactive = !project.is_active && !isDeleted
+
+    if (isDeleted) {
+      console.warn('⚠️ Cannot switch to deleted project:', project.name)
+      alert('Không thể chọn project đã bị xóa. Project này đang chờ xóa vĩnh viễn.')
+      return
+    }
+
+    if (isInactive) {
+      console.warn('⚠️ Cannot switch to inactive project:', project.name)
+      alert('Không thể chọn project đang tạm dừng. Vui lòng kích hoạt project trước khi sử dụng.')
       return
     }
 
@@ -231,6 +356,14 @@ export const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) =>
     }
   }, [user?.id])
 
+  // Reload projects when userProfile role changes (to include/exclude deleted projects)
+  useEffect(() => {
+    if (user?.id && userProfile?.role) {
+      console.log('🔄 User role loaded/changed, reloading projects...', userProfile.role)
+      loadProjects()
+    }
+  }, [userProfile?.role])
+
   // Auto-load saved project on mount
   useEffect(() => {
     if (projects.length > 0) {
@@ -252,8 +385,9 @@ export const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) =>
     setCurrentProject,
     loadProjects,
     createProject,
-    updateCurrentProject,
+    updateProject,
     deleteProject,
+    restoreProject,
     switchProject,
     showProjectSelector,
     setShowProjectSelector

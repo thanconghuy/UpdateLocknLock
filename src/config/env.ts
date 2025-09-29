@@ -41,7 +41,14 @@ export const validateEnv = (): void => {
 
 export const hasRequiredEnvVars = (): boolean => {
   try {
-    validateEnv();
+    // Only validate essential Supabase credentials for now
+    const essentialVars = ['SUPABASE_URL', 'SUPABASE_ANON_KEY'] as const;
+    const missingEssential = essentialVars.filter(key => !ENV[key]);
+
+    if (missingEssential.length > 0) {
+      throw new Error(`Missing essential variables: ${missingEssential.join(', ')}`);
+    }
+
     return true;
   } catch {
     return false;

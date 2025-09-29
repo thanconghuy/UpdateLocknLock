@@ -1,11 +1,12 @@
 import React, { useState, useRef } from 'react'
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
-import { wooCommerceService } from '../services/woocommerce'
+import { WooCommerceService } from '../services/woocommerce'
 import { ENV, hasRequiredEnvVars } from '../config/env'
 import { detectPlatformLinks } from '../utils/links'
 import { parsePriceText } from '../utils/priceUtils'
 import { syncMissingProducts, checkMissingProducts, updateAllProductsStockStatus, updateStockStatusOnly, comprehensiveProductSync, type SyncReport } from '../utils/productSyncChecker'
 import type { ProductData } from '../types'
+import { useProject } from '../contexts/ProjectContext'
 
 interface SyncProgress {
   total: number
@@ -14,6 +15,9 @@ interface SyncProgress {
   updated: number
   errors: number
   currentProduct?: string
+  currentBatch?: number
+  totalBatches?: number
+  batchSize?: number
 }
 
 interface SyncResult {
@@ -33,6 +37,7 @@ interface Props {
 }
 
 export default function ProductManagementCenter({ onSyncComplete, onReloadProducts }: Props) {
+  const { currentProject } = useProject()
   const [activeTab, setActiveTab] = useState<'sync' | 'report'>('sync')
 
   // Sync tab state
@@ -66,6 +71,31 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
     }
   }, [])
 
+  // Check if project has WooCommerce credentials
+  const hasProjectWooCommerceConfig = (): boolean => {
+    const hasConfig = !!(currentProject?.woocommerce_base_url &&
+                         currentProject?.woocommerce_consumer_key &&
+                         currentProject?.woocommerce_consumer_secret)
+
+    // Debug log để kiểm tra project config
+    if (currentProject) {
+      console.log('🔍 DEBUG: Project WooCommerce Config Check:')
+      console.log('   Project Name:', currentProject.name)
+      console.log('   Project ID:', currentProject.id)
+      console.log('   WooCommerce URL:', currentProject.woocommerce_base_url ?
+        `${currentProject.woocommerce_base_url.substring(0, 30)}...` : 'NOT SET')
+      console.log('   Consumer Key:', currentProject.woocommerce_consumer_key ?
+        `${currentProject.woocommerce_consumer_key.substring(0, 10)}...` : 'NOT SET')
+      console.log('   Consumer Secret:', currentProject.woocommerce_consumer_secret ?
+        `${currentProject.woocommerce_consumer_secret.substring(0, 10)}...` : 'NOT SET')
+      console.log('   Has Complete Config:', hasConfig)
+    } else {
+      console.log('🔍 DEBUG: No current project selected')
+    }
+
+    return hasConfig
+  }
+
   // === SYNC FUNCTIONALITY ===
   const fetchAllWooCommerceProducts = async (): Promise<any[]> => {
     const allProducts: any[] = []
@@ -76,11 +106,15 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
       while (true) {
         setSyncStatus(`Fetching products page ${page}...`)
 
-        const products = await wooCommerceService.getProducts({
+        if (!currentProject) {
+          throw new Error('No current project selected for WooCommerce sync')
+        }
+
+        const products = await WooCommerceService.getProducts({
           page,
           per_page: perPage,
           status: 'publish'
-        })
+        }, currentProject)
 
         if (!products || products.length === 0) {
           break
@@ -111,16 +145,26 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
       throw new Error('Database not connected')
     }
 
+    if (!currentProject) {
+      throw new Error('No project selected')
+    }
+
+    // Always use products_new for proper project isolation
+    const productsTable = 'products_new'
+
     try {
       const { data, error } = await clientRef.current
-        .from(ENV.DEFAULT_PRODUCTS_TABLE)
+        .from(productsTable)
         .select('website_id')
+        .eq('project_id', currentProject.project_id)
 
       if (error) {
         throw new Error(`Database error: ${error.message}`)
       }
 
-      return new Set(data?.map(item => item.website_id.toString()) || [])
+      const existingIds = new Set(data?.map(item => item.website_id.toString()) || [])
+      console.log(`📊 Found ${existingIds.size} existing products for project ${currentProject.project_id}`)
+      return existingIds
     } catch (error) {
       console.error('Error fetching existing products:', error)
       throw error
@@ -221,7 +265,14 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
       throw new Error('Database not connected')
     }
 
+    if (!currentProject) {
+      throw new Error('No project selected')
+    }
+
+    // Always use products_new for proper project isolation
+    const productsTable = 'products_new'
     const chunkSize = 50
+    const totalBatches = Math.ceil(products.length / chunkSize)
     let newProducts = 0
     let updated = 0
     let errors = 0
@@ -229,15 +280,23 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
     try {
       for (let i = 0; i < products.length; i += chunkSize) {
         const chunk = products.slice(i, i + chunkSize)
+        const currentBatch = Math.floor(i / chunkSize) + 1
 
         setSyncProgress(prev => prev ? {
           ...prev,
-          processed: i,
-          currentProduct: `Syncing batch ${Math.floor(i / chunkSize) + 1}...`
+          processed: i + chunk.length,
+          newProducts,
+          updated,
+          errors,
+          currentProduct: `Processing batch ${currentBatch}/${totalBatches} (${chunk.length} products)`,
+          currentBatch,
+          totalBatches,
+          batchSize: chunkSize
         } : null)
 
         const payload = chunk.map(product => ({
           // Essential meta only for optimized sync performance
+          project_id: currentProject.project_id,
           website_id: product.websiteId,
           title: product.title,
           sku: product.sku,
@@ -265,10 +324,9 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
         }))
 
         const { error } = await clientRef.current
-          .from(ENV.DEFAULT_PRODUCTS_TABLE)
+          .from(productsTable)
           .upsert(payload, {
-            onConflict: 'website_id',
-            ignoreDuplicates: false
+            onConflict: 'website_id,project_id'
           })
 
         if (error) {
@@ -277,6 +335,16 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
         } else {
           newProducts += chunk.length
         }
+
+        // Update progress after batch completion
+        setSyncProgress(prev => prev ? {
+          ...prev,
+          processed: i + chunk.length,
+          newProducts,
+          updated,
+          errors,
+          currentProduct: `Completed batch ${currentBatch}/${totalBatches}`,
+        } : null)
 
         await new Promise(resolve => setTimeout(resolve, 100))
       }
@@ -308,6 +376,11 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
 
   const handleSyncProducts = async () => {
     if (isSyncing) return
+
+    if (!currentProject) {
+      setSyncStatus('❌ No project selected. Please select a project first.')
+      return
+    }
 
     if (!hasRequiredEnvVars()) {
       setSyncStatus('❌ Environment variables not configured')
@@ -345,11 +418,14 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
     setIsSyncing(true)
     setSyncStatus('⚡ Starting optimized sync with essential meta only...')
     setSyncProgress({
-      total: 0,
+      total: 100, // Estimated for progress simulation
       processed: 0,
       newProducts: 0,
       updated: 0,
-      errors: 0
+      errors: 0,
+      currentBatch: 0,
+      totalBatches: 2, // Estimated batches
+      batchSize: 50
     })
 
     try {
@@ -360,44 +436,76 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
       console.log('⏰ ' + new Date().toLocaleString('vi-VN'))
       console.log('🔧 Tool: UpdateLocknLock Optimized Sync')
       console.log('📊 Scope: Essential meta fields only for maximum speed')
+      console.log('📍 Current project:', currentProject.name)
+      console.log('📋 Target table:', currentProject.products_table)
+      console.log('🆔 Project ID:', currentProject.project_id)
       console.log('='.repeat(80))
 
-      setSyncStatus('⚡ Fast analyzing products and syncing essential data...')
+      setSyncStatus('⚡ Fetching products from WooCommerce...')
 
-      const result = await comprehensiveProductSync()
+      // Fetch products first to get real total
+      const wooProducts = await fetchAllWooCommerceProducts()
+      console.log(`📦 Found ${wooProducts.length} products from WooCommerce`)
 
-      // Convert comprehensive sync result to expected format
-      setLastSyncResult({
-        success: result.success,
-        message: result.message,
-        stats: {
-          total: result.stats.totalWooProducts,
-          newProducts: result.stats.newProductsAdded,
-          updated: result.stats.productsUpdated,
-          errors: result.stats.errors
+      // Convert to ProductData format for batch processing
+      const productDataList: ProductData[] = wooProducts.map(product => {
+        const platformLinks = detectPlatformLinks(product.description || '')
+        const priceData = parsePriceText(product.description || '')
+
+        return {
+          websiteId: product.id.toString(),
+          title: product.name || '',
+          sku: product.sku || '',
+          price: parseFloat(product.price) || 0,
+          promotionalPrice: parseFloat(product.sale_price) || 0,
+          imageUrl: product.images?.[0]?.src || '',
+          externalUrl: product.permalink || '',
+          currency: 'VND',
+          hetHang: product.stock_status === 'outofstock',
+          linkShopee: platformLinks.shopee,
+          giaShopee: priceData.shopee,
+          linkTiktok: platformLinks.tiktok,
+          giaTiktok: priceData.tiktok,
+          linkLazada: platformLinks.lazada,
+          giaLazada: priceData.lazada,
+          linkDmx: platformLinks.dmx,
+          giaDmx: priceData.dmx,
+          linkTiki: platformLinks.tiki,
+          giaTiki: priceData.tiki
         }
       })
+
+      // Update progress with real total
+      setSyncProgress(prev => prev ? {
+        ...prev,
+        total: productDataList.length,
+        totalBatches: Math.ceil(productDataList.length / 50)
+      } : null)
+
+      // Now sync with real batch progress
+      const result = await syncProductsToDatabase(productDataList)
+      console.log('📋 Sync result:', result)
+
+      // Result is already in the expected format
+      setLastSyncResult(result)
 
       setSyncStatus(result.success ? '⚡ Optimized sync completed successfully!' : '❌ Optimized sync completed with errors')
 
       // Call the callback to refresh product list
-      if ((result.stats.newProductsAdded > 0 || result.stats.productsUpdated > 0 || result.stats.productsDeleted > 0) && onSyncComplete) {
+      if ((result.stats.newProducts > 0 || result.stats.updated > 0) && onSyncComplete) {
         console.log('🔄 Calling onSyncComplete to refresh UI...')
         onSyncComplete()
       }
 
       // Show detailed results
-      if (result.stats.newProductsAdded > 0 || result.stats.productsUpdated > 0 || result.stats.productsDeleted > 0) {
+      if (result.stats.newProducts > 0 || result.stats.updated > 0) {
         alert(
           `⚡ Đồng bộ tối ưu thành công!\n\n` +
           `📊 Kết quả đồng bộ:\n` +
-          `• 🛒 WooCommerce: ${result.stats.totalWooProducts} sản phẩm\n` +
-          `• 🔧 Tool trước đó: ${result.stats.totalToolProducts} sản phẩm\n` +
-          `• ➕ Thêm mới: ${result.stats.newProductsAdded} sản phẩm\n` +
-          `• 🔄 Cập nhật: ${result.stats.productsUpdated} sản phẩm\n` +
-          `• 🗑️ Xóa: ${result.stats.productsDeleted} sản phẩm\n` +
+          `• 🛒 WooCommerce: ${result.stats.total} sản phẩm\n` +
+          `• ➕ Thêm mới: ${result.stats.newProducts} sản phẩm\n` +
+          `• 🔄 Cập nhật: ${result.stats.updated} sản phẩm\n` +
           `• ❌ Lỗi: ${result.stats.errors}\n\n` +
-          `🎉 Tool hiện có: ${result.stats.totalToolProducts + result.stats.newProductsAdded - result.stats.productsDeleted} sản phẩm\n\n` +
           `⚡ Đã sync meta thiết yếu:\n` +
           `• Tên, ID, SKU, Giá, Hình ảnh, URL\n` +
           `• Platform Links & Prices (5 platforms)\n` +
@@ -465,7 +573,7 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
 
     try {
       console.log('🔍 Starting check for missing products...')
-      const result = await checkMissingProducts()
+      const result = await checkMissingProducts(currentProject || undefined)
       setCheckResult(result)
 
       console.log('📊 Check completed:')
@@ -476,7 +584,7 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
       if (result.missing.length > 0) {
         console.log('📋 Missing products list:')
         result.missing.forEach((product, index) => {
-          console.log(`${index + 1}. [${product.websiteId}] ${product.title} - ${product.price.toLocaleString('vi-VN')}₫`)
+          console.log(`${index + 1}. [${product.website_id}] ${product.title} - ${product.price?.toLocaleString('vi-VN') || 'N/A'}₫`)
         })
       }
 
@@ -525,7 +633,7 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
       console.log('🔧 Tool: UpdateLocknLock Product Sync')
       console.log('='.repeat(80))
 
-      const syncReport = await syncMissingProducts()
+      const syncReport = await syncMissingProducts(currentProject || undefined)
       setReport(syncReport)
 
       // Call the callback to refresh product list
@@ -587,10 +695,18 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
       return { instock: 0, outofstock: 0 }
     }
 
+    if (!currentProject) {
+      return { instock: 0, outofstock: 0 }
+    }
+
+    // Always use products_new for proper project isolation
+    const productsTable = 'products_new'
+
     try {
       const { data, error } = await clientRef.current
-        .from(ENV.DEFAULT_PRODUCTS_TABLE)
+        .from(productsTable)
         .select('het_hang')
+        .eq('project_id', currentProject.project_id)
 
       if (error) {
         console.error('Error counting stock status:', error)
@@ -650,7 +766,7 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
       console.log('='.repeat(80))
 
       // Use the new updateStockStatusOnly function
-      const result = await updateStockStatusOnly()
+      const result = await updateStockStatusOnly(currentProject || undefined)
 
       setStockUpdateResult({
         updated: result.updated,
@@ -745,7 +861,7 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
       console.log('='.repeat(60))
 
       // Use the comprehensive sync functionality
-      const result = await comprehensiveProductSync()
+      const result = await comprehensiveProductSync(currentProject || undefined)
 
       // Set sync result for UI display
       setLastSyncResult({
@@ -832,7 +948,7 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
     }
   }
 
-  const isReady = hasRequiredEnvVars() && clientRef.current
+  const isReady = hasRequiredEnvVars() && clientRef.current && hasProjectWooCommerceConfig()
   const isAnyLoading = isSyncing || isReporting || isChecking || isUpdatingStock || isReloadingProducts
 
   return (
@@ -887,35 +1003,101 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
             )}
 
             {syncProgress && (
-              <div className="space-y-2">
+              <div className="space-y-3">
+                {/* Overall Progress */}
                 <div className="text-sm text-gray-600">
                   Progress: {syncProgress.processed} / {syncProgress.total}
+                  {syncProgress.currentBatch && syncProgress.totalBatches && (
+                    <span className="ml-2 text-orange-600 font-medium">
+                      (Batch {syncProgress.currentBatch}/{syncProgress.totalBatches})
+                    </span>
+                  )}
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
+
+                {/* Progress Bar */}
+                <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
                   <div
-                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    className="h-3 rounded-full transition-all duration-300"
                     style={{
-                      width: syncProgress.total > 0 ? `${(syncProgress.processed / syncProgress.total) * 100}%` : '0%'
+                      width: syncProgress.total > 0 ? `${(syncProgress.processed / syncProgress.total) * 100}%` : '0%',
+                      backgroundColor: '#F94D2F'
                     }}
                   />
                 </div>
-                {syncProgress.currentProduct && (
-                  <div className="text-xs text-gray-500">
-                    {syncProgress.currentProduct}
+
+                {/* Batch Progress Bar */}
+                {syncProgress.currentBatch && syncProgress.totalBatches && (
+                  <div className="space-y-1">
+                    <div className="text-xs text-gray-500">
+                      Batch Progress: {syncProgress.currentBatch} / {syncProgress.totalBatches}
+                    </div>
+                    <div className="w-full bg-gray-100 rounded-full h-2">
+                      <div
+                        className="h-2 rounded-full transition-all duration-300"
+                        style={{
+                          width: `${(syncProgress.currentBatch / syncProgress.totalBatches) * 100}%`,
+                          backgroundColor: '#F94D2F'
+                        }}
+                      />
+                    </div>
                   </div>
                 )}
+
+                {/* Current Product */}
+                {syncProgress.currentProduct && (
+                  <div className="text-xs text-gray-500 truncate">
+                    Current: {syncProgress.currentProduct}
+                  </div>
+                )}
+
+                {/* Stats */}
+                <div className="flex gap-4 text-xs">
+                  <span className="text-green-600">✓ New: {syncProgress.newProducts}</span>
+                  <span className="text-blue-600">↻ Updated: {syncProgress.updated}</span>
+                  {syncProgress.errors > 0 && (
+                    <span className="text-red-600">✗ Errors: {syncProgress.errors}</span>
+                  )}
+                </div>
               </div>
             )}
 
             {lastSyncResult && (
-              <div className={`text-sm p-2 rounded ${
-                lastSyncResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+              <div className={`p-3 rounded-lg border-l-4 ${
+                lastSyncResult.success
+                  ? 'bg-green-50 border-green-400 text-green-800'
+                  : 'bg-red-50 border-red-400 text-red-800'
               }`}>
-                <div className="font-medium">{lastSyncResult.message}</div>
-                <div className="text-xs mt-1">
-                  Total: {lastSyncResult.stats.total} |
-                  New: {lastSyncResult.stats.newProducts} |
-                  Errors: {lastSyncResult.stats.errors}
+                <div className="flex items-center gap-2 font-medium mb-2">
+                  <span>{lastSyncResult.success ? '✅' : '❌'}</span>
+                  <span>Sync Complete</span>
+                  <span className="text-xs text-gray-500">
+                    {new Date().toLocaleTimeString()}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="flex justify-between">
+                    <span>Total Products:</span>
+                    <span className="font-medium">{lastSyncResult.stats.total}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>New Added:</span>
+                    <span className="font-medium text-green-600">{lastSyncResult.stats.newProducts}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Updated:</span>
+                    <span className="font-medium text-blue-600">{lastSyncResult.stats.updated || 0}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Errors:</span>
+                    <span className={`font-medium ${lastSyncResult.stats.errors > 0 ? 'text-red-600' : 'text-gray-500'}`}>
+                      {lastSyncResult.stats.errors}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-2 text-xs text-gray-600">
+                  {lastSyncResult.message}
                 </div>
               </div>
             )}
@@ -1163,7 +1345,15 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
 
         {!isReady && (
           <div className="text-xs text-amber-600 bg-amber-50 p-2 rounded">
-            ⚠️ WooCommerce or database connection not configured. Check environment variables.
+            {!hasRequiredEnvVars() ? (
+              <>⚠️ Database connection not configured. Check environment variables.</>
+            ) : !clientRef.current ? (
+              <>⚠️ Database client not initialized.</>
+            ) : !hasProjectWooCommerceConfig() ? (
+              <>⚠️ WooCommerce credentials not configured for this project. Please configure WooCommerce settings in the project configuration.</>
+            ) : (
+              <>⚠️ System not ready. Check configuration.</>
+            )}
           </div>
         )}
       </div>

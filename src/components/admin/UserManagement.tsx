@@ -138,8 +138,9 @@ export default function UserManagement({ onClose }: UserManagementProps) {
     }
   }
 
-  const getRoleIcon = (role: UserRole): string => {
-    switch (role) {
+  const getRoleIcon = (role?: string): string => {
+    if (!role) return '❓'
+    switch (role as UserRole) {
       case UserRole.ADMIN: return '👑'
       case UserRole.MANAGER: return '🏢'
       case UserRole.PRODUCT_EDITOR: return '✏️'
@@ -149,8 +150,9 @@ export default function UserManagement({ onClose }: UserManagementProps) {
     }
   }
 
-  const getRoleColor = (role: UserRole): string => {
-    switch (role) {
+  const getRoleColor = (role?: string): string => {
+    if (!role) return 'text-gray-600 bg-gray-100'
+    switch (role as UserRole) {
       case UserRole.ADMIN: return 'text-red-600 bg-red-100'
       case UserRole.MANAGER: return 'text-blue-600 bg-blue-100'
       case UserRole.PRODUCT_EDITOR: return 'text-green-600 bg-green-100'

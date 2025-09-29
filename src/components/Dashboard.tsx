@@ -15,7 +15,7 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ onNavigate }: DashboardProps) {
-  const { userProfile } = useAuth()
+  const { userProfile, isAdmin } = useAuth()
   const { currentProject } = useProject()
   const [stats, setStats] = useState<DashboardStats>({
     totalProducts: 0,
@@ -41,16 +41,25 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
     let recentUpdatesCount = 0
     let lastSync = null
 
+    // 🔧 Always use fixed table names for consistency and project isolation
+    const productsTable = 'products_new'
+    const auditTable = 'product_updates'
+
+    console.log('📊 Dashboard loading stats for project:', currentProject.name)
+    console.log('📋 Using tables:', { products: productsTable, audit: auditTable })
+
     try {
       // Try to get products count (graceful fallback if table doesn't exist)
       try {
         const { count } = await supabase
-          .from('products')
+          .from(productsTable)
           .select('*', { count: 'exact', head: true })
+          .eq('project_id', currentProject.project_id)
         productsCount = count || 0
+        console.log(`📦 Products count: ${productsCount}`)
       } catch (error: any) {
         if (error?.code === '42P01') { // Table doesn't exist
-          console.warn('⚠️ Products table not found, using default count')
+          console.warn(`⚠️ Products table '${productsTable}' not found, using default count`)
         } else {
           console.error('❌ Error getting products count:', error)
         }
@@ -63,14 +72,15 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
         weekAgo.setDate(weekAgo.getDate() - 7)
 
         const { count } = await supabase
-          .from('product_updates')
+          .from(auditTable)
           .select('*', { count: 'exact', head: true })
           .gte('created_at', weekAgo.toISOString())
 
         recentUpdatesCount = count || 0
+        console.log(`📈 Recent updates: ${recentUpdatesCount}`)
       } catch (error: any) {
         if (error?.code === '42P01') { // Table doesn't exist
-          console.warn('⚠️ Product_updates table not found, using default count')
+          console.warn(`⚠️ Audit table '${auditTable}' not found, using default count`)
         } else {
           console.error('❌ Error getting recent updates count:', error)
         }
@@ -80,15 +90,16 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
       // Try to get last sync info (graceful fallback if table doesn't exist)
       try {
         const { data } = await supabase
-          .from('product_updates')
+          .from(auditTable)
           .select('created_at, status')
           .order('created_at', { ascending: false })
           .limit(1)
           .single()
         lastSync = data
+        console.log('⏰ Last sync:', lastSync?.created_at)
       } catch (error: any) {
         if (error?.code === '42P01') { // Table doesn't exist
-          console.warn('⚠️ Product_updates table not found, no sync info available')
+          console.warn(`⚠️ Audit table '${auditTable}' not found, no sync info available`)
         } else {
           console.warn('⚠️ Could not get last sync info (table may be empty)')
         }
@@ -255,7 +266,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             </div>
           </button>
 
-          {userProfile?.role === 'admin' && (
+          {isAdmin() && (
             <button
               onClick={() => onNavigate('admin')}
               className="flex items-center space-x-3 p-4 bg-red-50 hover:bg-red-100 rounded-lg border border-red-200 transition-colors"

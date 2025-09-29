@@ -2,13 +2,12 @@ import React, { useState } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { UserRole } from '../../types/auth'
 import DatabaseConfigModule from './DatabaseConfigModule'
-import WooCommerceConfigModule from './WooCommerceConfigModule'
 import SystemSetupChecker from './SystemSetupChecker'
 import UserManagement from './UserManagement'
 
 export default function AdminSettings() {
   const { userProfile } = useAuth()
-  const [activeTab, setActiveTab] = useState<'database' | 'woocommerce' | 'users'>('database')
+  const [activeTab, setActiveTab] = useState<'database' | 'users'>('database')
   const [systemReady, setSystemReady] = useState(false)
 
   // Check if user is admin
@@ -64,19 +63,6 @@ export default function AdminSettings() {
               </div>
             </button>
             <button
-              onClick={() => setActiveTab('woocommerce')}
-              className={`flex-1 px-6 py-4 text-center font-medium transition-colors ${
-                activeTab === 'woocommerce'
-                  ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-500'
-                  : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
-              }`}
-            >
-              <div className="flex items-center justify-center gap-2">
-                <span>🛒</span>
-                WooCommerce
-              </div>
-            </button>
-            <button
               onClick={() => setActiveTab('users')}
               className={`flex-1 px-6 py-4 text-center font-medium transition-colors ${
                 activeTab === 'users'
@@ -101,13 +87,6 @@ export default function AdminSettings() {
         <div className="space-y-6">
           {activeTab === 'database' && (
             systemReady ? <DatabaseConfigModule /> : <SystemSetupChecker onSetupComplete={() => setSystemReady(true)} />
-          )}
-          {activeTab === 'woocommerce' && (
-            systemReady ? <WooCommerceConfigModule /> : (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                <div className="text-yellow-800">⚠️ Vui lòng thiết lập Database trước</div>
-              </div>
-            )
           )}
           {activeTab === 'users' && <UserManagement />}
         </div>

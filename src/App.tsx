@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { AuthProvider } from './contexts/AuthContext'
 import { ProjectProvider, useProject } from './contexts/ProjectContext'
 import ProtectedRoute from './components/auth/ProtectedRoute'
@@ -9,6 +9,7 @@ import ProductsPage from './components/ProductsPage'
 import UpdateLogsPage from './components/UpdateLogsPage'
 import AdminSettings from './components/admin/AdminSettings'
 import Dashboard from './components/Dashboard'
+import ProjectManagement from './components/project/ProjectManagement'
 import { CSVRow, ProductData } from './types'
 import { smartMapCSVData } from './utils/smartCSVMapper'
 import './scripts/debugLoading' // Auto-run debug on app load
@@ -17,10 +18,19 @@ import './scripts/testConnection' // Test Supabase connection
 function ProjectApp() {
   const [rows, setRows] = useState<ProductData[]>([])
   const [errors, setErrors] = useState<any[]>([])
-  const [route, setRoute] = useState<'dashboard'|'import'|'products'|'logs'|'admin'>('dashboard')
+  const [route, setRoute] = useState<'dashboard'|'import'|'products'|'logs'|'admin'|'projects'>('dashboard')
   const [refreshKey, setRefreshKey] = useState(0)
 
   const { currentProject, showProjectSelector } = useProject()
+
+  // 🔄 Clear imported data when switching projects to prevent contamination
+  useEffect(() => {
+    if (currentProject) {
+      console.log('🧹 App: Clearing imported rows for project switch:', currentProject.name)
+      setRows([]) // Clear imported CSV data when project changes
+      setErrors([]) // Also clear any import errors
+    }
+  }, [currentProject?.id])
 
   function handleFileLoad(data: CSVRow[]) {
     const mapped = smartMapCSVData(data)
@@ -72,14 +82,15 @@ function ProjectApp() {
           <ImportPage rows={rows} setRows={setRows} errors={errors} setErrors={setErrors} />
         ) : route === 'products' ? (
           <ProductsPage
-            key={`${refreshKey}-${currentProject.id}`}
-            data={rows}
+            key={`${refreshKey}-${currentProject.project_id}`}
             refreshKey={refreshKey}
             onSyncComplete={handleSyncComplete}
             onReloadProducts={handleReloadProducts}
           />
         ) : route === 'admin' ? (
           <AdminSettings />
+        ) : route === 'projects' ? (
+          <ProjectManagement />
         ) : (
           <UpdateLogsPage />
         )}

@@ -1,5 +1,6 @@
 export interface Project {
   id: string
+  project_id: number  // 🆕 Numeric project ID for linking with products
   name: string
   description?: string
   slug: string
@@ -25,6 +26,7 @@ export interface Project {
   // Timestamps
   created_at: string
   updated_at: string
+  deleted_at?: string | null  // 🆕 For 2-tier deletion strategy
 }
 
 export interface ProjectMember {

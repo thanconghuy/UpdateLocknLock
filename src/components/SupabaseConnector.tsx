@@ -230,8 +230,8 @@ export default function SupabaseConnector({ onConnect, onUpload, data }: Supabas
             console.log('✅ Using admin settings for database config')
             setUrl(adminConfig.supabase_url)
             setKey(adminConfig.supabase_anon_key)
-            setTable(adminConfig.default_products_table)
-            setAuditTable(adminConfig.default_audit_table)
+            setTable('products_new') // Hardcoded for consistency
+            setAuditTable('product_updates') // Hardcoded for consistency
             setStatus('🔧 Sử dụng cấu hình từ Admin Settings')
           } else {
             console.log('ℹ️ No admin config found, using local/env config')

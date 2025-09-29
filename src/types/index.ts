@@ -2,25 +2,30 @@ export type CSVRow = Record<string, string>
 
 export type ProductData = {
   id: string
-  websiteId?: string
+  project_id?: number
+  website_id?: string
   title?: string
   price?: number
-  promotionalPrice?: number
-  externalUrl?: string
+  promotional_price?: number
+  external_url?: string
   category?: string
-  imageUrl?: string
+  image_url?: string
   sku?: string
+  het_hang?: boolean
   // Platform data
-  linkShopee?: string
-  giaShopee?: number
-  linkTiktok?: string
-  giaTiktok?: number
-  linkLazada?: string
-  giaLazada?: number
-  linkDmx?: string
-  giaDmx?: number
-  linkTiki?: string
-  giaTiki?: number
+  link_shopee?: string
+  gia_shopee?: number
+  link_tiktok?: string
+  gia_tiktok?: number
+  link_lazada?: string
+  gia_lazada?: number
+  link_dmx?: string
+  gia_dmx?: number
+  link_tiki?: string
+  gia_tiki?: number
+  // Timestamps
+  created_at?: string
+  updated_at?: string
 }
 
 export type ValidationError = {

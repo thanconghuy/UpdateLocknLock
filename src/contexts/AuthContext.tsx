@@ -8,7 +8,9 @@ interface UserProfile {
   email: string
   full_name?: string
   avatar_url?: string
-  role: UserRole
+  role?: string
+  primary_role_id?: string
+  permissions?: string[]
   is_active: boolean
   created_at: string
   updated_at: string
@@ -24,6 +26,8 @@ interface AuthContextType {
   logout: () => Promise<void>
   resetPassword: (email: string) => Promise<{ error: AuthError | null }>
   refreshProfile: () => Promise<void>
+  hasPermission: (permission: string) => boolean
+  isAdmin: () => boolean
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -35,7 +39,9 @@ const AuthContext = createContext<AuthContextType>({
   register: async () => ({ error: null }),
   logout: async () => {},
   resetPassword: async () => ({ error: null }),
-  refreshProfile: async () => {}
+  refreshProfile: async () => {},
+  hasPermission: () => false,
+  isAdmin: () => false
 })
 
 export const useAuth = () => {
@@ -56,18 +62,27 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
 
-  // Fetch user profile from database with timeout protection
+  // Fetch user profile with roles and permissions
   const fetchUserProfile = async (userId: string): Promise<UserProfile | null> => {
     try {
+      console.log('🔐 Fetching user profile with roles for:', userId)
+
       // Add timeout protection for profile fetch
       const profilePromise = supabase
         .from('user_profiles')
-        .select('*')
+        .select(`
+          *,
+          roles:primary_role_id (
+            name,
+            display_name,
+            level
+          )
+        `)
         .eq('id', userId)
         .single()
 
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('User profile fetch timeout')), 3000)
+        setTimeout(() => reject(new Error('User profile fetch timeout')), 5000)
       )
 
       const { data: profile, error } = await Promise.race([profilePromise, timeoutPromise]) as any
@@ -77,7 +92,23 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         return null
       }
 
-      return profile as UserProfile
+      // Get user permissions (disabled temporarily due to missing RPC function)
+      // const { data: permissions } = await supabase
+      //   .rpc('get_user_permissions', { user_uuid: userId })
+
+      const userProfile: UserProfile = {
+        ...profile,
+        role: profile.roles?.name || 'viewer',
+        permissions: [] // Temporary: empty permissions array
+      }
+
+      console.log('✅ User profile loaded:', {
+        email: userProfile.email,
+        role: userProfile.role,
+        permissions: userProfile.permissions?.length || 0
+      })
+
+      return userProfile
     } catch (error) {
       console.error('❌ Exception fetching user profile:', error)
       return null
@@ -276,6 +307,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   }
 
+  // Helper functions for permissions
+  const hasPermission = (permission: string): boolean => {
+    if (!userProfile?.permissions) return false
+    return userProfile.permissions.includes(permission)
+  }
+
+  const isAdmin = (): boolean => {
+    return userProfile?.role === 'admin'
+  }
+
   const value = {
     user,
     userProfile,
@@ -285,7 +326,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     register,
     logout,
     resetPassword,
-    refreshProfile
+    refreshProfile,
+    hasPermission,
+    isAdmin
   }
 
   return (

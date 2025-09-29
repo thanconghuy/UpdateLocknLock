@@ -1,9 +1,11 @@
 import { createClient } from '@supabase/supabase-js'
-import { wooCommerceService } from '../services/woocommerce'
+import { WooCommerceService } from '../services/woocommerce'
 import { ENV, hasRequiredEnvVars } from '../config/env'
 import { detectPlatformLinks } from './links'
 import { parsePriceText } from './priceUtils'
-import type { ProductData } from '../types'
+import { ProductService } from '../services/productService'
+import type { ProductData, ProductDataDB } from '../types'
+import type { Project } from '../types/project'
 
 export interface SyncReport {
   toolProducts: number
@@ -11,13 +13,26 @@ export interface SyncReport {
   missingProducts: number
   newlyAdded: number
   errors: string[]
-  missingProductsList: ProductData[]
+  missingProductsList: ProductDataDB[]
 }
 
 export class ProductSyncChecker {
   private supabase = hasRequiredEnvVars()
     ? createClient(ENV.SUPABASE_URL, ENV.SUPABASE_ANON_KEY)
     : null
+  private currentProject: Project | null = null
+
+  constructor(project?: Project) {
+    this.currentProject = project || null
+  }
+
+  private getProductsTable(): string {
+    if (!this.currentProject) {
+      throw new Error('No project selected for sync operation')
+    }
+    // Always use products_new for consistency and project isolation
+    return 'products_new'
+  }
 
   async checkAndSyncMissingProducts(): Promise<SyncReport> {
     const report: SyncReport = {
@@ -127,17 +142,17 @@ export class ProductSyncChecker {
   }
 
   private async getToolProducts(): Promise<Array<{website_id: string}>> {
-    if (!this.supabase) throw new Error('Database not connected')
-
-    const { data, error } = await this.supabase
-      .from(ENV.DEFAULT_PRODUCTS_TABLE)
-      .select('website_id')
-
-    if (error) {
-      throw new Error(`Database error: ${error.message}`)
+    if (!this.currentProject) {
+      throw new Error('No project selected for sync operation')
     }
 
-    return data || []
+    try {
+      const { data: products } = await ProductService.getProjectProducts(this.currentProject.project_id)
+      return products.map(p => ({ website_id: p.website_id || p.id }))
+    } catch (error) {
+      console.error('❌ Error getting tool products:', error)
+      throw new Error(`Failed to get tool products: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
   }
 
   private async getAllWooCommerceProducts(): Promise<any[]> {
@@ -147,11 +162,15 @@ export class ProductSyncChecker {
 
     try {
       while (true) {
-        const products = await wooCommerceService.getProducts({
+        if (!this.currentProject) {
+          throw new Error('No project selected for WooCommerce sync')
+        }
+
+        const products = await WooCommerceService.getProducts({
           page,
           per_page: perPage,
           status: 'publish'
-        })
+        }, this.currentProject)
 
         if (!products || products.length === 0) {
           break
@@ -176,7 +195,7 @@ export class ProductSyncChecker {
     }
   }
 
-  private async findMissingProducts(toolProducts: Array<{website_id: string}>, wooProducts: any[]): Promise<ProductData[]> {
+  private async findMissingProducts(toolProducts: Array<{website_id: string}>, wooProducts: any[]): Promise<ProductDataDB[]> {
     const toolProductIds = new Set(toolProducts.map(p => p.website_id.toString()))
 
     const missingWooProducts = wooProducts.filter(wooProduct =>
@@ -188,14 +207,14 @@ export class ProductSyncChecker {
     console.log(`   ❌ Missing: ${missingWooProducts.length} products`)
 
     // Convert missing WooCommerce products to ProductData format
-    const missingProducts: ProductData[] = missingWooProducts.map(wooProduct => {
+    const missingProducts: ProductDataDB[] = missingWooProducts.map(wooProduct => {
       return this.mapWooProductToProductData(wooProduct)
     })
 
     return missingProducts
   }
 
-  private mapWooProductToProductData(wooProduct: any): ProductData {
+  private mapWooProductToProductData(wooProduct: any): ProductDataDB {
     console.log(`🔍 Optimized mapping for product ${wooProduct.id}: extracting essential meta only`)
 
     // Extract essential platform data from meta_data only (no description parsing for speed)
@@ -259,29 +278,33 @@ export class ProductSyncChecker {
 
     return {
       id: '', // Will be set by database
-      websiteId: wooProduct.id.toString(),
+      project_id: this.currentProject?.project_id, // Add project isolation
+      website_id: wooProduct.id.toString(),
       title: wooProduct.name?.trim() || '',
       price: parsePriceText(wooProduct.regular_price || '0'),
-      promotionalPrice: parsePriceText(wooProduct.sale_price || '0') || null,
+      promotional_price: parsePriceText(wooProduct.sale_price || '0') || null,
       sku: wooProduct.sku?.trim() || '',
-      imageUrl: wooProduct.images?.[0]?.src?.trim() || '',
-      externalUrl: wooProduct.permalink?.trim() || '',
-      currency: 'VND',
+      image_url: wooProduct.images?.[0]?.src?.trim() || '',
+      external_url: wooProduct.permalink?.trim() || '',
 
-      // Platform links and prices from meta_data
-      linkShopee: platformData.linkShopee,
-      giaShopee: platformData.giaShopee,
-      linkTiktok: platformData.linkTiktok,
-      giaTiktok: platformData.giaTiktok,
-      linkLazada: platformData.linkLazada,
-      giaLazada: platformData.giaLazada,
-      linkDmx: platformData.linkDmx,
-      giaDmx: platformData.giaDmx,
-      linkTiki: platformData.linkTiki,
-      giaTiki: platformData.giaTiki,
+      // Platform links and prices from meta_data (snake_case format)
+      link_shopee: platformData.linkShopee,
+      gia_shopee: platformData.giaShopee,
+      link_tiktok: platformData.linkTiktok,
+      gia_tiktok: platformData.giaTiktok,
+      link_lazada: platformData.linkLazada,
+      gia_lazada: platformData.giaLazada,
+      link_dmx: platformData.linkDmx,
+      gia_dmx: platformData.giaDmx,
+      link_tiki: platformData.linkTiki,
+      gia_tiki: platformData.giaTiki,
 
       // Stock status from meta_data
-      hetHang: hetHang,
+      het_hang: hetHang,
+
+      // Timestamps
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
 
       // Skip other meta to optimize speed
       // - category: not synced for performance
@@ -289,7 +312,7 @@ export class ProductSyncChecker {
     }
   }
 
-  private async addMissingProducts(products: ProductData[]): Promise<{success: number, errors: string[]}> {
+  private async addMissingProducts(products: ProductDataDB[]): Promise<{success: number, errors: string[]}> {
     if (!this.supabase) throw new Error('Database not connected')
 
     const chunkSize = 50
@@ -309,34 +332,34 @@ export class ProductSyncChecker {
 
       // Show products in this batch
       chunk.forEach((product, index) => {
-        console.log(`   ${i + index + 1}. [${product.websiteId}] ${product.title} - ${product.price.toLocaleString('vi-VN')}₫`)
+        console.log(`   ${i + index + 1}. [${product.website_id}] ${product.title} - ${product.price?.toLocaleString('vi-VN')}₫`)
       })
 
       const payload = chunk.map(product => ({
         // Essential meta only for optimized sync
-        website_id: product.websiteId,
+        project_id: this.currentProject?.project_id, // Add project isolation
+        website_id: product.website_id,
         title: product.title,
         sku: product.sku,
         price: product.price,
-        promotional_price: product.promotionalPrice,
-        image_url: product.imageUrl,
-        external_url: product.externalUrl,
-        currency: product.currency,
+        promotional_price: product.promotional_price,
+        image_url: product.image_url,
+        external_url: product.external_url,
         // Stock status from meta_data
-        het_hang: product.hetHang || false,
+        het_hang: product.het_hang || false,
         // Platform links and prices
-        link_shopee: product.linkShopee,
-        gia_shopee: product.giaShopee,
-        link_tiktok: product.linkTiktok,
-        gia_tiktok: product.giaTiktok,
-        link_lazada: product.linkLazada,
-        gia_lazada: product.giaLazada,
-        link_dmx: product.linkDmx,
-        gia_dmx: product.giaDmx,
-        link_tiki: product.linkTiki,
-        gia_tiki: product.giaTiki,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        link_shopee: product.link_shopee,
+        gia_shopee: product.gia_shopee,
+        link_tiktok: product.link_tiktok,
+        gia_tiktok: product.gia_tiktok,
+        link_lazada: product.link_lazada,
+        gia_lazada: product.gia_lazada,
+        link_dmx: product.link_dmx,
+        gia_dmx: product.gia_dmx,
+        link_tiki: product.link_tiki,
+        gia_tiki: product.gia_tiki,
+        created_at: product.created_at || new Date().toISOString(),
+        updated_at: product.updated_at || new Date().toISOString(),
         // Skip for performance: category, description
       }))
 
@@ -344,10 +367,9 @@ export class ProductSyncChecker {
         console.log(`   🔄 Sending batch ${batchNumber} to database...`)
 
         const { data, error } = await this.supabase
-          .from(ENV.DEFAULT_PRODUCTS_TABLE)
+          .from(this.getProductsTable())
           .upsert(payload, {
-            onConflict: 'website_id',
-            ignoreDuplicates: false
+            onConflict: 'website_id,project_id'
           })
 
         if (error) {
@@ -402,7 +424,7 @@ export class ProductSyncChecker {
   }
 
   // Method to just check without syncing
-  async checkMissingProductsOnly(): Promise<{missing: ProductData[], report: Omit<SyncReport, 'newlyAdded' | 'errors'>}> {
+  async checkMissingProductsOnly(): Promise<{missing: ProductDataDB[], report: Omit<SyncReport, 'newlyAdded' | 'errors'>}> {
     const toolProducts = await this.getToolProducts()
     const wooProducts = await this.getAllWooCommerceProducts()
     const missingProducts = await this.findMissingProducts(toolProducts, wooProducts)
@@ -431,8 +453,10 @@ export class ProductSyncChecker {
 
       // Get all tool products with their website_id
       const { data: toolProducts, error: toolError } = await this.supabase
-        .from(ENV.DEFAULT_PRODUCTS_TABLE)
+        .from(this.getProductsTable())
         .select('id, website_id, title')
+        .eq('project_id', this.currentProject!.project_id)
+        .eq('project_id', this.currentProject!.project_id)
 
       if (toolError) {
         throw new Error(`Failed to get tool products: ${toolError.message}`)
@@ -504,7 +528,7 @@ export class ProductSyncChecker {
           try {
             for (const update of updates) {
               const { error, data } = await this.supabase
-                .from(ENV.DEFAULT_PRODUCTS_TABLE)
+                .from(this.getProductsTable())
                 .update({
                   het_hang: update.het_hang,
                   updated_at: update.updated_at
@@ -589,8 +613,9 @@ export class ProductSyncChecker {
 
       // Step 1: Get current tool products
       const { data: toolProducts, error: toolError } = await this.supabase
-        .from(ENV.DEFAULT_PRODUCTS_TABLE)
+        .from(this.getProductsTable())
         .select('id, website_id, title, het_hang')
+        .eq('project_id', this.currentProject!.project_id)
 
       if (toolError) {
         throw new Error(`Failed to get tool products: ${toolError.message}`)
@@ -676,7 +701,7 @@ export class ProductSyncChecker {
             if (currentIsOutOfStock !== newHetHang) {
               try {
                 const { error } = await this.supabase
-                  .from(ENV.DEFAULT_PRODUCTS_TABLE)
+                  .from(this.getProductsTable())
                   .update({
                     het_hang: newHetHang,
                     updated_at: new Date().toISOString()
@@ -712,8 +737,9 @@ export class ProductSyncChecker {
       // Step 6: Count final stock status
       console.log('\n📊 STEP 5: Counting final stock status...')
       const { data: finalProducts, error: finalError } = await this.supabase
-        .from(ENV.DEFAULT_PRODUCTS_TABLE)
+        .from(this.getProductsTable())
         .select('het_hang')
+        .eq('project_id', this.currentProject!.project_id)
 
       if (finalError) {
         console.error('Failed to get final counts:', finalError.message)
@@ -812,8 +838,9 @@ export class ProductSyncChecker {
     try {
       // Get all tool products
       const { data: toolProducts, error: toolError } = await this.supabase
-        .from(ENV.DEFAULT_PRODUCTS_TABLE)
+        .from(this.getProductsTable())
         .select('id, website_id, title')
+        .eq('project_id', this.currentProject!.project_id)
 
       if (toolError) {
         throw new Error(`Failed to get tool products: ${toolError.message}`)
@@ -864,7 +891,7 @@ export class ProductSyncChecker {
 
         try {
           const { error, count } = await this.supabase
-            .from(ENV.DEFAULT_PRODUCTS_TABLE)
+            .from(this.getProductsTable())
             .delete()
             .in('id', batch)
 
@@ -913,8 +940,9 @@ export class ProductSyncChecker {
 
       // Get all tool products
       const { data: toolProducts, error: toolError } = await this.supabase
-        .from(ENV.DEFAULT_PRODUCTS_TABLE)
+        .from(this.getProductsTable())
         .select('id, website_id, title')
+        .eq('project_id', this.currentProject!.project_id)
 
       if (toolError) {
         throw new Error(`Failed to get tool products: ${toolError.message}`)
@@ -956,7 +984,7 @@ export class ProductSyncChecker {
 
               // Update only essential meta fields for optimized sync
               const { error } = await this.supabase
-                .from(ENV.DEFAULT_PRODUCTS_TABLE)
+                .from(this.getProductsTable())
                 .update({
                   title: updatedProductData.title,
                   price: updatedProductData.price,
@@ -1064,6 +1092,9 @@ export class ProductSyncChecker {
       console.log('='.repeat(80))
       console.log('⏰ ' + new Date().toLocaleString('vi-VN'))
       console.log('🔧 Tool: UpdateLocknLock Comprehensive Sync')
+      console.log('📍 Project:', this.currentProject?.name || 'No project')
+      console.log('📋 Target table:', this.getProductsTable())
+      console.log('🆔 Project ID:', this.currentProject?.project_id || 'No project ID')
       console.log('='.repeat(80))
 
       // Step 1: Get current state
@@ -1165,22 +1196,22 @@ export class ProductSyncChecker {
 }
 
 // Export convenience function
-export async function syncMissingProducts(): Promise<SyncReport> {
-  const checker = new ProductSyncChecker()
+export async function syncMissingProducts(project?: Project): Promise<SyncReport> {
+  const checker = new ProductSyncChecker(project)
   return await checker.checkAndSyncMissingProducts()
 }
 
-export async function checkMissingProducts(): Promise<{missing: ProductData[], report: Omit<SyncReport, 'newlyAdded' | 'errors'>}> {
-  const checker = new ProductSyncChecker()
+export async function checkMissingProducts(project?: Project): Promise<{missing: ProductDataDB[], report: Omit<SyncReport, 'newlyAdded' | 'errors'>}> {
+  const checker = new ProductSyncChecker(project)
   return await checker.checkMissingProductsOnly()
 }
 
-export async function updateAllProductsStockStatus(): Promise<{updated: number, errors: string[]}> {
-  const checker = new ProductSyncChecker()
+export async function updateAllProductsStockStatus(project?: Project): Promise<{updated: number, errors: string[]}> {
+  const checker = new ProductSyncChecker(project)
   return await checker.updateAllProductsStockStatus()
 }
 
-export async function updateStockStatusOnly(): Promise<{
+export async function updateStockStatusOnly(project?: Project): Promise<{
   success: boolean
   message: string
   wooStats: { inStock: number, outOfStock: number, total: number }
@@ -1188,7 +1219,7 @@ export async function updateStockStatusOnly(): Promise<{
   updated: number
   errors: string[]
 }> {
-  const checker = new ProductSyncChecker()
+  const checker = new ProductSyncChecker(project)
   const result = await checker.updateStockStatusOnly()
 
   // Transform the response to match expected format
@@ -1210,7 +1241,7 @@ export async function updateStockStatusOnly(): Promise<{
   }
 }
 
-export async function comprehensiveProductSync(): Promise<{
+export async function comprehensiveProductSync(project?: Project): Promise<{
   success: boolean
   message: string
   stats: {
@@ -1223,6 +1254,6 @@ export async function comprehensiveProductSync(): Promise<{
   }
   errors: string[]
 }> {
-  const checker = new ProductSyncChecker()
+  const checker = new ProductSyncChecker(project)
   return await checker.comprehensiveProductSync()
 }

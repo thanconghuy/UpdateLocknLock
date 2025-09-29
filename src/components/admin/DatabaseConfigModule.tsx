@@ -4,16 +4,13 @@ import { useSettingsService } from '../../services/settingsService'
 interface DatabaseConfig {
   supabase_url: string
   supabase_anon_key: string
-  default_products_table: string
-  default_audit_table: string
+  // Table names are now hardcoded to products_new and product_updates for consistency
 }
 
 export default function DatabaseConfigModule() {
   const [config, setConfig] = useState<DatabaseConfig>({
     supabase_url: '',
-    supabase_anon_key: '',
-    default_products_table: 'products',
-    default_audit_table: 'product_updates'
+    supabase_anon_key: ''
   })
 
   const [loading, setLoading] = useState(false)
@@ -57,9 +54,7 @@ export default function DatabaseConfigModule() {
         // No configuration found - this is normal for first time setup
         setConfig({
           supabase_url: '',
-          supabase_anon_key: '',
-          default_products_table: 'products',
-          default_audit_table: 'product_updates'
+          supabase_anon_key: ''
         })
         setStatus({ type: 'info', message: '📝 Chưa có cấu hình - vui lòng nhập thông tin mới' })
         console.log('DatabaseConfigModule: No configuration found, using defaults')
@@ -89,15 +84,7 @@ export default function DatabaseConfigModule() {
       return false
     }
 
-    if (!config.default_products_table.trim()) {
-      setStatus({ type: 'error', message: 'Products table name is required' })
-      return false
-    }
-
-    if (!config.default_audit_table.trim()) {
-      setStatus({ type: 'error', message: 'Audit table name is required' })
-      return false
-    }
+    // Table names are now hardcoded - no validation needed
 
     return true
   }
@@ -156,9 +143,7 @@ export default function DatabaseConfigModule() {
   const resetToDefaults = () => {
     setConfig({
       supabase_url: '',
-      supabase_anon_key: '',
-      default_products_table: 'products',
-      default_audit_table: 'product_updates'
+      supabase_anon_key: ''
     })
     setStatus({ type: 'info', message: 'Reset to default values' })
   }
@@ -240,33 +225,11 @@ export default function DatabaseConfigModule() {
           </p>
         </div>
 
-        {/* Table Names */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Products Table Name *
-            </label>
-            <input
-              type="text"
-              value={config.default_products_table}
-              onChange={(e) => handleInputChange('default_products_table', e.target.value)}
-              placeholder="products"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Audit Table Name *
-            </label>
-            <input
-              type="text"
-              value={config.default_audit_table}
-              onChange={(e) => handleInputChange('default_audit_table', e.target.value)}
-              placeholder="product_updates"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
+        {/* Table Names section removed - now hardcoded to products_new and product_updates for consistency */}
+        <div className="bg-blue-50 border-l-4 border-blue-400 p-4 rounded">
+          <p className="text-sm text-blue-800">
+            <strong>ℹ️ Table Configuration:</strong> Table names are now standardized to <code className="bg-blue-100 px-1 rounded">products_new</code> and <code className="bg-blue-100 px-1 rounded">product_updates</code> for consistency and project isolation.
+          </p>
         </div>
 
         {/* Actions */}
