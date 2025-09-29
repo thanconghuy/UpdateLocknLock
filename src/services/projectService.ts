@@ -499,6 +499,21 @@ export class ProjectService {
       console.log('🔥 ===== PERMANENT DELETE CASCADE STARTING =====')
       console.log('🎯 Target project:', { id: projectId, name: projectName })
 
+      // First get the project record to access project_id (numeric)
+      const { data: project, error: projectFetchError } = await supabase
+        .from('projects')
+        .select('id, project_id, name')
+        .eq('id', projectId)
+        .single()
+
+      if (projectFetchError || !project) {
+        console.error('❌ Failed to fetch project for permanent delete:', projectFetchError)
+        return false
+      }
+
+      const numericProjectId = project.project_id
+      console.log('📋 Project details:', { uuid: projectId, numericId: numericProjectId, name: project.name })
+
       // Delete in specific order to avoid foreign key constraints
 
       // 1. Delete project members (skip if table doesn't exist)
@@ -506,7 +521,7 @@ export class ProjectService {
       const { data: membersDeleted, error: membersError } = await supabase
         .from('project_members')
         .delete()
-        .eq('project_id', projectId)
+        .eq('project_id', numericProjectId)
         .select()
 
       if (membersError) {
@@ -525,7 +540,7 @@ export class ProjectService {
       const { data: updatesDeleted, error: updatesError } = await supabase
         .from('product_updates')
         .delete()
-        .eq('project_id', projectId)
+        .eq('project_id', numericProjectId)
         .select()
 
       if (updatesError) {
@@ -546,7 +561,7 @@ export class ProjectService {
       const { data: productsDeleted, error: productsError } = await supabase
         .from('products_new')
         .delete()
-        .eq('project_id', projectId)
+        .eq('project_id', numericProjectId)
         .select()
 
       if (productsError) {

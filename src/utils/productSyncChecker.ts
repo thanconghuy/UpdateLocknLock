@@ -84,17 +84,17 @@ export class ProductSyncChecker {
       console.log('-'.repeat(80))
 
       missingProducts.forEach((product, index) => {
-        console.log(`${(index + 1).toString().padStart(3, ' ')}. [ID: ${product.websiteId}] ${product.title}`)
-        console.log(`     💰 Price: ${product.price.toLocaleString('vi-VN')}₫${product.promotionalPrice ? ` (Sale: ${product.promotionalPrice.toLocaleString('vi-VN')}₫)` : ''}`)
+        console.log(`${(index + 1).toString().padStart(3, ' ')}. [ID: ${product.website_id}] ${product.title}`)
+        console.log(`     💰 Price: ${product.price?.toLocaleString('vi-VN')}₫${product.promotional_price ? ` (Sale: ${product.promotional_price.toLocaleString('vi-VN')}₫)` : ''}`)
         console.log(`     📦 SKU: ${product.sku || 'N/A'}`)
         console.log(`     📂 Category: ${product.category || 'N/A'}`)
-        if (product.linkShopee || product.linkTiktok || product.linkLazada || product.linkDmx || product.linkTiki) {
+        if (product.link_shopee || product.link_tiktok || product.link_lazada || product.link_dmx || product.link_tiki) {
           const platforms = []
-          if (product.linkShopee) platforms.push('Shopee')
-          if (product.linkTiktok) platforms.push('TikTok')
-          if (product.linkLazada) platforms.push('Lazada')
-          if (product.linkDmx) platforms.push('DMX')
-          if (product.linkTiki) platforms.push('Tiki')
+          if (product.link_shopee) platforms.push('Shopee')
+          if (product.link_tiktok) platforms.push('TikTok')
+          if (product.link_lazada) platforms.push('Lazada')
+          if (product.link_dmx) platforms.push('DMX')
+          if (product.link_tiki) platforms.push('Tiki')
           console.log(`     🔗 Platform links: ${platforms.join(', ')}`)
         }
         console.log('')
@@ -148,7 +148,7 @@ export class ProductSyncChecker {
 
     try {
       const { data: products } = await ProductService.getProjectProducts(this.currentProject.project_id)
-      return products.map(p => ({ website_id: p.website_id || p.id }))
+      return products.map(p => ({ website_id: p.websiteId || p.id }))
     } catch (error) {
       console.error('❌ Error getting tool products:', error)
       throw new Error(`Failed to get tool products: ${error instanceof Error ? error.message : 'Unknown error'}`)
@@ -220,16 +220,16 @@ export class ProductSyncChecker {
     // Extract essential platform data from meta_data only (no description parsing for speed)
     const metaData = wooProduct.meta_data || []
     const platformData = {
-      linkShopee: '',
-      giaShopee: null as number | null,
-      linkTiktok: '',
-      giaTiktok: null as number | null,
-      linkLazada: '',
-      giaLazada: null as number | null,
-      linkDmx: '',
-      giaDmx: null as number | null,
-      linkTiki: '',
-      giaTiki: null as number | null,
+      link_shopee: '',
+      gia_shopee: null as number | null,
+      link_tiktok: '',
+      gia_tiktok: null as number | null,
+      link_lazada: '',
+      gia_lazada: null as number | null,
+      link_dmx: '',
+      gia_dmx: null as number | null,
+      link_tiki: '',
+      gia_tiki: null as number | null,
     }
 
     // Extract platform links, prices and stock status from meta_data efficiently
@@ -238,34 +238,34 @@ export class ProductSyncChecker {
     metaData.forEach((meta: any) => {
       switch (meta.key) {
         case 'link_shopee':
-          platformData.linkShopee = meta.value?.trim() || ''
+          platformData.link_shopee = meta.value?.trim() || ''
           break
         case 'gia_shopee':
-          platformData.giaShopee = parsePriceText(meta.value) || null
+          platformData.gia_shopee = parsePriceText(meta.value) || null
           break
         case 'link_tiktok':
-          platformData.linkTiktok = meta.value?.trim() || ''
+          platformData.link_tiktok = meta.value?.trim() || ''
           break
         case 'gia_tiktok':
-          platformData.giaTiktok = parsePriceText(meta.value) || null
+          platformData.gia_tiktok = parsePriceText(meta.value) || null
           break
         case 'link_lazada':
-          platformData.linkLazada = meta.value?.trim() || ''
+          platformData.link_lazada = meta.value?.trim() || ''
           break
         case 'gia_lazada':
-          platformData.giaLazada = parsePriceText(meta.value) || null
+          platformData.gia_lazada = parsePriceText(meta.value) || null
           break
         case 'link_dmx':
-          platformData.linkDmx = meta.value?.trim() || ''
+          platformData.link_dmx = meta.value?.trim() || ''
           break
         case 'gia_dmx':
-          platformData.giaDmx = parsePriceText(meta.value) || null
+          platformData.gia_dmx = parsePriceText(meta.value) || null
           break
         case 'link_tiki':
-          platformData.linkTiki = meta.value?.trim() || ''
+          platformData.link_tiki = meta.value?.trim() || ''
           break
         case 'gia_tiki':
-          platformData.giaTiki = parsePriceText(meta.value) || null
+          platformData.gia_tiki = parsePriceText(meta.value) || null
           break
         case 'het_hang':
           // Extract stock status: "Còn hàng" or "Hết hàng"
@@ -288,16 +288,16 @@ export class ProductSyncChecker {
       external_url: wooProduct.permalink?.trim() || '',
 
       // Platform links and prices from meta_data (snake_case format)
-      link_shopee: platformData.linkShopee,
-      gia_shopee: platformData.giaShopee,
-      link_tiktok: platformData.linkTiktok,
-      gia_tiktok: platformData.giaTiktok,
-      link_lazada: platformData.linkLazada,
-      gia_lazada: platformData.giaLazada,
-      link_dmx: platformData.linkDmx,
-      gia_dmx: platformData.giaDmx,
-      link_tiki: platformData.linkTiki,
-      gia_tiki: platformData.giaTiki,
+      link_shopee: platformData.link_shopee,
+      gia_shopee: platformData.gia_shopee,
+      link_tiktok: platformData.link_tiktok,
+      gia_tiktok: platformData.gia_tiktok,
+      link_lazada: platformData.link_lazada,
+      gia_lazada: platformData.gia_lazada,
+      link_dmx: platformData.link_dmx,
+      gia_dmx: platformData.gia_dmx,
+      link_tiki: platformData.link_tiki,
+      gia_tiki: platformData.gia_tiki,
 
       // Stock status from meta_data
       het_hang: hetHang,
@@ -380,7 +380,7 @@ export class ProductSyncChecker {
           // Log which products failed
           console.log('   📋 Failed products in this batch:')
           chunk.forEach((product, index) => {
-            console.log(`      ${i + index + 1}. [${product.websiteId}] ${product.title}`)
+            console.log(`      ${i + index + 1}. [${product.website_id}] ${product.title}`)
           })
         } else {
           successCount += chunk.length
@@ -388,7 +388,7 @@ export class ProductSyncChecker {
 
           // Track added products
           chunk.forEach((product, index) => {
-            addedProducts.push(`[${product.websiteId}] ${product.title}`)
+            addedProducts.push(`[${product.website_id}] ${product.title}`)
           })
         }
 
@@ -406,7 +406,7 @@ export class ProductSyncChecker {
 
         console.log('   📋 Products that failed due to exception:')
         chunk.forEach((product, index) => {
-          console.log(`      ${i + index + 1}. [${product.websiteId}] ${product.title}`)
+          console.log(`      ${i + index + 1}. [${product.website_id}] ${product.title}`)
         })
       }
     }
@@ -988,24 +988,24 @@ export class ProductSyncChecker {
                 .update({
                   title: updatedProductData.title,
                   price: updatedProductData.price,
-                  promotional_price: updatedProductData.promotionalPrice,
+                  promotional_price: updatedProductData.promotional_price,
                   sku: updatedProductData.sku,
-                  image_url: updatedProductData.imageUrl,
-                  external_url: updatedProductData.externalUrl,
-                  currency: updatedProductData.currency,
+                  image_url: updatedProductData.image_url,
+                  external_url: updatedProductData.external_url,
+                  // currency: updatedProductData.currency, // Not in ProductDataDB type
                   // Stock status from meta_data
-                  het_hang: updatedProductData.hetHang,
+                  het_hang: updatedProductData.het_hang,
                   // Platform links and prices
-                  link_shopee: updatedProductData.linkShopee,
-                  gia_shopee: updatedProductData.giaShopee,
-                  link_tiktok: updatedProductData.linkTiktok,
-                  gia_tiktok: updatedProductData.giaTiktok,
-                  link_lazada: updatedProductData.linkLazada,
-                  gia_lazada: updatedProductData.giaLazada,
-                  link_dmx: updatedProductData.linkDmx,
-                  gia_dmx: updatedProductData.giaDmx,
-                  link_tiki: updatedProductData.linkTiki,
-                  gia_tiki: updatedProductData.giaTiki,
+                  link_shopee: updatedProductData.link_shopee,
+                  gia_shopee: updatedProductData.gia_shopee,
+                  link_tiktok: updatedProductData.link_tiktok,
+                  gia_tiktok: updatedProductData.gia_tiktok,
+                  link_lazada: updatedProductData.link_lazada,
+                  gia_lazada: updatedProductData.gia_lazada,
+                  link_dmx: updatedProductData.link_dmx,
+                  gia_dmx: updatedProductData.gia_dmx,
+                  link_tiki: updatedProductData.link_tiki,
+                  gia_tiki: updatedProductData.gia_tiki,
                   updated_at: new Date().toISOString()
                   // Skip for performance: category, description
                 })

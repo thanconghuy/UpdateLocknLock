@@ -85,8 +85,8 @@ if (typeof window !== 'undefined') {
         if (result.missing.length > 0) {
           console.log('\n📋 Missing Products:')
           result.missing.forEach((product, index) => {
-            console.log(`${index + 1}. [${product.websiteId}] ${product.title}`)
-            console.log(`   Price: ${product.price.toLocaleString('vi-VN')}₫`)
+            console.log(`${index + 1}. [${product.website_id}] ${product.title}`)
+            console.log(`   Price: ${product.price?.toLocaleString('vi-VN')}₫`)
             console.log(`   SKU: ${product.sku || 'N/A'}`)
             console.log(`   Category: ${product.category || 'N/A'}`)
             console.log('---')

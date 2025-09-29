@@ -147,21 +147,15 @@ export default function ProjectManagement({ onClose }: ProjectManagementProps) {
     //        project.owner_id === userProfile?.id
   }
 
-  if (projects.length === 0) {
-    return (
-      <div className="text-center py-12">
-        <div className="w-24 h-24 mx-auto bg-gray-100 rounded-full flex items-center justify-center mb-4">
-          <span className="text-4xl">🏢</span>
-        </div>
-        <h3 className="text-lg font-medium text-gray-900 mb-2">
-          Chưa có project nào
-        </h3>
-        <p className="text-gray-500">
-          Tạo project đầu tiên để bắt đầu quản lý
-        </p>
-      </div>
-    )
+  // Calculate project statistics
+  const projectStats = {
+    total: projects.length,
+    active: projects.filter(p => p.is_active && !p.deleted_at).length,
+    inactive: projects.filter(p => !p.is_active && !p.deleted_at).length,
+    deleted: projects.filter(p => !!p.deleted_at).length
   }
+
+  const hasProjects = projects.length > 0
 
   return (
     <div className="space-y-6">
@@ -180,8 +174,71 @@ export default function ProjectManagement({ onClose }: ProjectManagementProps) {
         )}
       </div>
 
+      {/* Project Statistics Overview */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <span className="text-xl">📊</span>
+          Tổng quan Projects
+        </h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {/* Total Projects */}
+          <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Tổng số</p>
+                <p className="text-2xl font-bold text-gray-900">{projectStats.total}</p>
+              </div>
+              <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
+                <span className="text-xl">📁</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Active Projects */}
+          <div className="bg-green-50 rounded-lg p-4 border border-green-100">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-green-700">Hoạt động</p>
+                <p className="text-2xl font-bold text-green-900">{projectStats.active}</p>
+              </div>
+              <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                <span className="text-xl">🟢</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Inactive Projects */}
+          <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-100">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-yellow-700">Tạm dừng</p>
+                <p className="text-2xl font-bold text-yellow-900">{projectStats.inactive}</p>
+              </div>
+              <div className="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center">
+                <span className="text-xl">⏸️</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Deleted Projects */}
+          <div className="bg-red-50 rounded-lg p-4 border border-red-100">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-red-700">Chờ xóa (7 ngày)</p>
+                <p className="text-2xl font-bold text-red-900">{projectStats.deleted}</p>
+              </div>
+              <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center">
+                <span className="text-xl">🗑️</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Projects List */}
       <div className="grid grid-cols-1 gap-6">
-        {projects.map((project) => {
+        {hasProjects ? (
+          projects.map((project) => {
           const isDeleted = !!project.deleted_at
           const isInactive = !project.is_active && !isDeleted
           const isExpired = isDeleted && new Date(project.deleted_at!) < new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
@@ -199,8 +256,8 @@ export default function ProjectManagement({ onClose }: ProjectManagementProps) {
                   : 'bg-white border-gray-200'
               }`}
             >
-            {/* Disable editing for deleted/inactive projects */}
-            {editingProject?.id === project.id && !isDeleted && !isInactive ? (
+            {/* Only disable editing for deleted projects, allow editing inactive projects */}
+            {editingProject?.id === project.id && !isDeleted ? (
               /* EDIT MODE */
               <div className="p-6">
                 <div className="flex items-center justify-between mb-6">
@@ -381,8 +438,8 @@ export default function ProjectManagement({ onClose }: ProjectManagementProps) {
                   </div>
 
                   <div className="flex items-center space-x-2 ml-4">
-                    {/* Disable edit/delete buttons for deleted/inactive projects */}
-                    {!isDeleted && !isInactive && canEditProject(project) && (
+                    {/* Only disable edit button for deleted projects, allow editing inactive projects */}
+                    {!isDeleted && canEditProject(project) && (
                       <button
                         onClick={() => handleEdit(project)}
                         className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
@@ -408,7 +465,7 @@ export default function ProjectManagement({ onClose }: ProjectManagementProps) {
                     )}
                     {isInactive && (
                       <div className="text-xs text-yellow-600 italic">
-                        Project tạm dừng - Không thể chọn làm project hiện tại
+                        Project tạm dừng - Có thể sửa để chuyển lại trạng thái hoạt động
                       </div>
                     )}
                   </div>
@@ -417,7 +474,21 @@ export default function ProjectManagement({ onClose }: ProjectManagementProps) {
             )}
           </div>
           )
-        })}
+        })
+        ) : (
+          /* Empty State */
+          <div className="text-center py-12">
+            <div className="w-24 h-24 mx-auto bg-gray-100 rounded-full flex items-center justify-center mb-4">
+              <span className="text-4xl">🏢</span>
+            </div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">
+              Chưa có project nào
+            </h3>
+            <p className="text-gray-500">
+              Tạo project đầu tiên để bắt đầu quản lý
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Delete Confirmation Modal */}

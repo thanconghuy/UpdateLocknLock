@@ -453,6 +453,7 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
         const priceData = parsePriceText(product.description || '')
 
         return {
+          id: product.id.toString(),
           websiteId: product.id.toString(),
           title: product.name || '',
           sku: product.sku || '',
@@ -462,16 +463,16 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
           externalUrl: product.permalink || '',
           currency: 'VND',
           hetHang: product.stock_status === 'outofstock',
-          linkShopee: platformLinks.shopee,
-          giaShopee: priceData.shopee,
-          linkTiktok: platformLinks.tiktok,
-          giaTiktok: priceData.tiktok,
-          linkLazada: platformLinks.lazada,
-          giaLazada: priceData.lazada,
-          linkDmx: platformLinks.dmx,
-          giaDmx: priceData.dmx,
-          linkTiki: platformLinks.tiki,
-          giaTiki: priceData.tiki
+          linkShopee: platformLinks.shopee || undefined,
+          giaShopee: 0,
+          linkTiktok: platformLinks.tiktok || undefined,
+          giaTiktok: 0,
+          linkLazada: platformLinks.lazada || undefined,
+          giaLazada: 0,
+          linkDmx: platformLinks.dmx || undefined,
+          giaDmx: 0,
+          linkTiki: platformLinks.tiki || undefined,
+          giaTiki: 0
         }
       })
 
@@ -517,8 +518,8 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
         alert(
           '✅ Tất cả sản phẩm đã được đồng bộ!\n\n' +
           `📊 Thống kê:\n` +
-          `• 🛒 WooCommerce: ${result.stats.totalWooProducts} sản phẩm\n` +
-          `• 🔧 Tool: ${result.stats.totalToolProducts} sản phẩm\n` +
+          `• 🛒 WooCommerce: ${(result.stats as any).totalWooProducts} sản phẩm\n` +
+          `• 🔧 Tool: ${(result.stats as any).totalToolProducts} sản phẩm\n` +
           `• Không có thay đổi nào cần thiết\n\n` +
           '🎉 Database đã được cập nhật hoàn toàn!'
         )
@@ -526,9 +527,9 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
         alert(
           `⚠️ Đồng bộ hoàn tất với lỗi\n\n` +
           `📊 Kết quả:\n` +
-          `• ➕ Thêm mới: ${result.stats.newProductsAdded} sản phẩm\n` +
-          `• 🔄 Cập nhật: ${result.stats.productsUpdated} sản phẩm\n` +
-          `• 🗑️ Xóa: ${result.stats.productsDeleted} sản phẩm\n` +
+          `• ➕ Thêm mới: ${(result.stats as any).newProductsAdded} sản phẩm\n` +
+          `• 🔄 Cập nhật: ${(result.stats as any).productsUpdated} sản phẩm\n` +
+          `• 🗑️ Xóa: ${(result.stats as any).productsDeleted} sản phẩm\n` +
           `• ❌ Lỗi: ${result.stats.errors}\n\n` +
           `📋 Xem Console (F12) để biết chi tiết các lỗi!`
         )
@@ -868,47 +869,47 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
         success: result.success,
         message: result.message,
         stats: {
-          total: result.stats.totalWooProducts,
-          newProducts: result.stats.newProductsAdded,
-          updated: result.stats.productsUpdated,
+          total: (result.stats as any).totalWooProducts,
+          newProducts: (result.stats as any).newProductsAdded,
+          updated: (result.stats as any).productsUpdated,
           errors: result.stats.errors
         }
       })
 
       // Update sync tracking
       setLastSyncTimestamp(new Date().toLocaleString('vi-VN'))
-      setLastSyncCount(result.stats.totalWooProducts)
+      setLastSyncCount((result.stats as any).totalWooProducts)
 
       // Wait for database operations to complete before refreshing UI
       console.log('🔄 Waiting 2 seconds for database operations to commit...')
       await new Promise(resolve => setTimeout(resolve, 2000))
 
       // Call the callback to refresh product list
-      if ((result.stats.newProductsAdded > 0 || result.stats.productsUpdated > 0 || result.stats.productsDeleted > 0) && onSyncComplete) {
+      if (((result.stats as any).newProductsAdded > 0 || (result.stats as any).productsUpdated > 0 || (result.stats as any).productsDeleted > 0) && onSyncComplete) {
         console.log('🔄 Calling onSyncComplete to refresh UI...')
         onSyncComplete()
       }
 
       // Show detailed results
-      if (result.stats.newProductsAdded > 0 || result.stats.productsUpdated > 0 || result.stats.productsDeleted > 0) {
+      if ((result.stats as any).newProductsAdded > 0 || (result.stats as any).productsUpdated > 0 || (result.stats as any).productsDeleted > 0) {
         alert(
           `✅ Đồng bộ tất cả sản phẩm thành công!\n\n` +
           `📊 Kết quả:\n` +
-          `• 🛒 WooCommerce có: ${result.stats.totalWooProducts} sản phẩm\n` +
-          `• 🔧 Tool trước đó có: ${result.stats.totalToolProducts} sản phẩm\n` +
-          `• ➕ Thêm mới: ${result.stats.newProductsAdded} sản phẩm\n` +
-          `• 🔄 Cập nhật: ${result.stats.productsUpdated} sản phẩm\n` +
-          `• 🗑️ Xóa: ${result.stats.productsDeleted} sản phẩm\n` +
+          `• 🛒 WooCommerce có: ${(result.stats as any).totalWooProducts} sản phẩm\n` +
+          `• 🔧 Tool trước đó có: ${(result.stats as any).totalToolProducts} sản phẩm\n` +
+          `• ➕ Thêm mới: ${(result.stats as any).newProductsAdded} sản phẩm\n` +
+          `• 🔄 Cập nhật: ${(result.stats as any).productsUpdated} sản phẩm\n` +
+          `• 🗑️ Xóa: ${(result.stats as any).productsDeleted} sản phẩm\n` +
           `• ❌ Lỗi: ${result.stats.errors}\n\n` +
-          `🎉 Tool hiện có: ${result.stats.totalToolProducts + result.stats.newProductsAdded - result.stats.productsDeleted} sản phẩm\n\n` +
+          `🎉 Tool hiện có: ${(result.stats as any).totalToolProducts + (result.stats as any).newProductsAdded - (result.stats as any).productsDeleted} sản phẩm\n\n` +
           `📋 Xem Console (F12) để biết chi tiết quá trình!`
         )
       } else if (result.success) {
         alert(
           '✅ Tất cả sản phẩm đã được đồng bộ!\n\n' +
           `📊 Thống kê:\n` +
-          `• 🛒 WooCommerce: ${result.stats.totalWooProducts} sản phẩm\n` +
-          `• 🔧 Tool: ${result.stats.totalToolProducts} sản phẩm\n` +
+          `• 🛒 WooCommerce: ${(result.stats as any).totalWooProducts} sản phẩm\n` +
+          `• 🔧 Tool: ${(result.stats as any).totalToolProducts} sản phẩm\n` +
           `• Không có thay đổi nào cần thiết\n\n` +
           '🎉 Database đã được cập nhật hoàn toàn!'
         )
@@ -916,9 +917,9 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
         alert(
           `⚠️ Đồng bộ hoàn tất với lỗi\n\n` +
           `📊 Kết quả:\n` +
-          `• ➕ Thêm mới: ${result.stats.newProductsAdded} sản phẩm\n` +
-          `• 🔄 Cập nhật: ${result.stats.productsUpdated} sản phẩm\n` +
-          `• 🗑️ Xóa: ${result.stats.productsDeleted} sản phẩm\n` +
+          `• ➕ Thêm mới: ${(result.stats as any).newProductsAdded} sản phẩm\n` +
+          `• 🔄 Cập nhật: ${(result.stats as any).productsUpdated} sản phẩm\n` +
+          `• 🗑️ Xóa: ${(result.stats as any).productsDeleted} sản phẩm\n` +
           `• ❌ Lỗi: ${result.stats.errors}\n\n` +
           `📋 Xem Console (F12) để biết chi tiết các lỗi!`
         )
