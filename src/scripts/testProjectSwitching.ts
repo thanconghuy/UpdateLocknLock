@@ -77,8 +77,19 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
     console.log('🔧 ProjectContext debugging available via React DevTools')
   })
 
-  // Auto-run test
-  setTimeout(() => {
-    testProjectSwitchingFeatures()
+  // Auto-run test only if user is authenticated
+  setTimeout(async () => {
+    try {
+      const { supabase } = await import('../lib/supabase')
+      const { data: { user } } = await supabase.auth.getUser()
+
+      if (user) {
+        testProjectSwitchingFeatures()
+      } else {
+        console.log('ℹ️ Skipping project switching test - no authenticated user')
+      }
+    } catch (error) {
+      console.log('ℹ️ Skipping project switching test - authentication check failed')
+    }
   }, 2000)
 }

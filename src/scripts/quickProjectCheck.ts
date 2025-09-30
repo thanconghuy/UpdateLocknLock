@@ -6,6 +6,17 @@ export const quickProjectCheck = async () => {
   console.log('='.repeat(50))
 
   try {
+    // Check authentication first
+    const { supabase } = await import('../lib/supabase')
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) {
+      console.log('ℹ️ No authenticated user - skipping project check')
+      console.log('='.repeat(50))
+      return
+    }
+
+    console.log('👤 User authenticated:', user.email)
     const projects = await ProjectService.getUserProjects()
 
     console.log('📋 Projects found:', projects.length)

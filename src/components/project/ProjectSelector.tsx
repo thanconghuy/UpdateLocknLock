@@ -1,7 +1,8 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useProject } from '../../contexts/ProjectContext'
 import { useAuth } from '../../contexts/AuthContext'
-import { CreateProjectData } from '../../types/project'
+import { CreateProjectData, WooCommerceStore } from '../../types/project'
+import { WooCommerceStoreService } from '../../services/woocommerceStoreService'
 
 export default function ProjectSelector() {
   const {
@@ -27,20 +28,96 @@ export default function ProjectSelector() {
     audit_table: 'product_updates'
   })
 
+  // 🆕 WooCommerce Store Management
+  const [stores, setStores] = useState<WooCommerceStore[]>([])
+  const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null)
+  const [showNewStoreForm, setShowNewStoreForm] = useState(false)
+  const [loadingStores, setLoadingStores] = useState(false)
+  const [testingConnection, setTestingConnection] = useState(false)
+
+  // Load existing stores
+  useEffect(() => {
+    if (showCreateForm) {
+      loadWooCommerceStores()
+    }
+  }, [showCreateForm])
+
+  const loadWooCommerceStores = async () => {
+    setLoadingStores(true)
+    try {
+      const storesData = await WooCommerceStoreService.getAccessibleStores()
+      setStores(storesData)
+    } catch (error) {
+      console.error('❌ Error loading stores:', error)
+    } finally {
+      setLoadingStores(false)
+    }
+  }
+
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!formData.name.trim() || !formData.woocommerce_base_url.trim() ||
-        !formData.woocommerce_consumer_key.trim() || !formData.woocommerce_consumer_secret.trim()) {
+
+    // Validation
+    if (!formData.name.trim()) {
+      alert('Vui lòng nhập tên project')
       return
+    }
+
+    // Check if using existing store or creating new one
+    let storeToUse: WooCommerceStore | null = null
+
+    if (selectedStoreId) {
+      // Using existing store
+      storeToUse = stores.find(s => s.id === selectedStoreId) || null
+      if (!storeToUse) {
+        alert('Store đã chọn không tồn tại')
+        return
+      }
+    } else {
+      // Creating new store - validate fields
+      if (!formData.woocommerce_base_url.trim() ||
+          !formData.woocommerce_consumer_key.trim() ||
+          !formData.woocommerce_consumer_secret.trim()) {
+        alert('Vui lòng nhập đầy đủ thông tin WooCommerce')
+        return
+      }
+
+      // Create or get existing store
+      storeToUse = await WooCommerceStoreService.createOrGetStore({
+        base_url: formData.woocommerce_base_url,
+        consumer_key: formData.woocommerce_consumer_key,
+        consumer_secret: formData.woocommerce_consumer_secret
+      })
+
+      if (!storeToUse) {
+        alert('Không thể tạo hoặc tìm thấy WooCommerce store')
+        return
+      }
     }
 
     try {
       setCreating(true)
-      const newProject = await createProject(formData)
+
+      // Create project with store reference
+      const projectData = {
+        ...formData,
+        woocommerce_store_id: storeToUse.id,
+        // Keep legacy fields for backward compatibility (temporary)
+        woocommerce_base_url: storeToUse.base_url,
+        woocommerce_consumer_key: storeToUse.consumer_key,
+        woocommerce_consumer_secret: storeToUse.consumer_secret
+      }
+
+      const newProject = await createProject(projectData)
 
       if (newProject) {
         console.log('✅ Project created:', newProject.name)
+        console.log('🏪 Using WooCommerce store:', storeToUse.store_name || storeToUse.base_url)
+
+        // Reset form
         setShowCreateForm(false)
+        setSelectedStoreId(null)
+        setShowNewStoreForm(false)
         setFormData({
           name: '',
           description: '',
@@ -53,6 +130,7 @@ export default function ProjectSelector() {
       }
     } catch (error) {
       console.error('❌ Error creating project:', error)
+      alert('Có lỗi xảy ra khi tạo project')
     } finally {
       setCreating(false)
     }
@@ -190,12 +268,25 @@ export default function ProjectSelector() {
             )}
           </div>
         ) : (
-          /* Create Project Form */
+          /* Create Project Form - Approach 2: Clean & Focused */
           <div className="max-w-2xl mx-auto">
+            {/* Current Context Header */}
+            {currentProject && (
+              <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-center">
+                  <span className="text-blue-600 text-lg mr-2">🟢</span>
+                  <div>
+                    <p className="text-sm text-blue-600 font-medium">Project hiện tại</p>
+                    <p className="text-blue-800 font-semibold">{currentProject.name}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="bg-white shadow rounded-lg p-6">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-xl font-semibold text-gray-900">
-                  Tạo Project Mới
+                  🎯 Tạo Project Mới
                 </h2>
                 <button
                   onClick={() => setShowCreateForm(false)}

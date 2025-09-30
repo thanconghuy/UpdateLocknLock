@@ -84,22 +84,25 @@ export default function SystemSetupChecker({ onSetupComplete }: SystemSetupCheck
     try {
       console.log('🔍 SystemSetupChecker: Checking if system_settings table exists...')
 
-      // Add timeout to prevent infinite checking
+      // Add shorter timeout to prevent blocking UI
       const checkPromise = supabase
         .from('system_settings')
         .select('id')
         .limit(1)
 
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('System setup check timed out after 8 seconds')), 8000)
+        setTimeout(() => reject(new Error('System setup check timed out after 2 seconds')), 2000)
       )
 
       const { data, error } = await Promise.race([checkPromise, timeoutPromise]) as any
 
       if (error) {
         if (error.message?.includes('timed out')) {
-          console.error('❌ SystemSetupChecker: Timeout - possible connection issue')
-          setError('Timeout kiểm tra database sau 8 giây. Có thể database chậm hoặc không khả dụng.')
+          console.error('❌ SystemSetupChecker: Timeout - skipping setup check')
+          console.log('🔄 SystemSetupChecker: Assuming system is ready due to timeout')
+          setChecking(false)
+          onSetupComplete() // Skip setup and continue
+          return
         } else if (error.code === '42P01' || error.message?.includes('relation') && error.message?.includes('does not exist')) {
           console.log('⚠️ SystemSetupChecker: system_settings table does not exist')
           setSetupNeeded(true)

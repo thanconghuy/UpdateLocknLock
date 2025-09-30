@@ -23,10 +23,29 @@ export interface Project {
   is_active: boolean
   max_members: number
 
+  // WooCommerce Store Reference (NEW)
+  woocommerce_store_id?: number  // 🆕 Reference to normalized store
+
   // Timestamps
   created_at: string
   updated_at: string
   deleted_at?: string | null  // 🆕 For 2-tier deletion strategy
+}
+
+// 🆕 WooCommerce Store Entity
+export interface WooCommerceStore {
+  id: number
+  base_url: string
+  store_name?: string
+  consumer_key: string
+  consumer_secret: string
+  is_active: boolean
+  last_tested_at?: string
+  last_test_status?: 'success' | 'failed' | 'pending'
+  last_error_message?: string
+  created_by: string
+  created_at: string
+  updated_at: string
 }
 
 export interface ProjectMember {
@@ -53,6 +72,9 @@ export interface ProjectMember {
 export interface CreateProjectData {
   name: string
   description?: string
+  // 🆕 New normalized approach
+  woocommerce_store_id?: number
+  // Legacy fields (for backward compatibility)
   woocommerce_base_url: string
   woocommerce_consumer_key: string
   woocommerce_consumer_secret: string

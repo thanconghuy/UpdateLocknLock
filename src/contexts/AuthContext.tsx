@@ -1,19 +1,21 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import { AuthError, User, Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
-import { UserRole } from '../types/auth'
 
 interface UserProfile {
   id: string
   email: string
   full_name?: string
-  avatar_url?: string
   role?: string
   primary_role_id?: string
-  permissions?: string[]
   is_active: boolean
   created_at: string
-  updated_at: string
+  roles?: {
+    id: string
+    name: string
+    display_name?: string
+    level?: number
+  }
 }
 
 interface AuthContextType {
@@ -56,268 +58,369 @@ interface AuthProviderProps {
   children: ReactNode
 }
 
-export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
+const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null)
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
 
-  // Fetch user profile with roles and permissions
+  // Prevent infinite reload detection
+  const [initCount, setInitCount] = useState(0)
+
+  // Fetch user profile using bypass function to avoid RLS issues
   const fetchUserProfile = async (userId: string): Promise<UserProfile | null> => {
     try {
-      console.log('🔐 Fetching user profile with roles for:', userId)
+      console.log('🔐 AuthContext: Fetching profile for:', userId)
 
-      // Add timeout protection for profile fetch
-      const profilePromise = supabase
+      // Try using the bypass function first
+      const { data: profileData, error: bypassError } = await supabase
+        .rpc('get_user_with_role', { user_id: userId })
+
+      if (!bypassError && profileData) {
+        console.log('✅ Profile loaded via bypass function:', profileData)
+        return profileData
+      }
+
+      console.warn('⚠️ Bypass function failed, trying direct query:', bypassError)
+
+      // Fallback to direct query
+      const { data: profile, error } = await supabase
         .from('user_profiles')
-        .select(`
-          *,
-          roles:primary_role_id (
-            name,
-            display_name,
-            level
-          )
-        `)
+        .select('id, email, full_name, role, primary_role_id, is_active, created_at')
         .eq('id', userId)
         .single()
 
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('User profile fetch timeout')), 5000)
-      )
-
-      const { data: profile, error } = await Promise.race([profilePromise, timeoutPromise]) as any
-
       if (error) {
-        console.error('❌ Error fetching user profile:', error)
+        console.error('❌ Profile fetch error:', error)
+        console.error('❌ Error details:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint
+        })
+
+        // If profile doesn't exist, try to create one
+        if (error.code === 'PGRST116') {
+          console.log('🔐 Creating basic profile...')
+
+          const { data: authUser } = await supabase.auth.getUser()
+          if (!authUser.user) return null
+
+          // Get admin role ID first
+          const { data: adminRole } = await supabase
+            .from('roles')
+            .select('id')
+            .eq('name', 'admin')
+            .single()
+
+          const { data: newProfile, error: createError } = await supabase
+            .from('user_profiles')
+            .insert({
+              id: userId,
+              email: authUser.user.email || '',
+              full_name: authUser.user.email || '',
+              role: 'admin',
+              primary_role_id: adminRole?.id || null,
+              is_active: true
+            })
+            .select('id, email, full_name, role, primary_role_id, is_active, created_at')
+            .single()
+
+          if (createError) {
+            console.error('❌ Create profile error:', createError)
+            return null
+          }
+
+          console.log('✅ Profile created:', newProfile)
+          return newProfile
+        }
+
         return null
       }
 
-      // Get user permissions (disabled temporarily due to missing RPC function)
-      // const { data: permissions } = await supabase
-      //   .rpc('get_user_permissions', { user_uuid: userId })
+      console.log('✅ Profile loaded via direct query:', profile)
 
-      const userProfile: UserProfile = {
-        ...profile,
-        role: profile.roles?.name || 'viewer',
-        permissions: [] // Temporary: empty permissions array
+      // Now fetch role info separately if primary_role_id exists
+      if (profile.primary_role_id) {
+        const { data: roleData, error: roleError } = await supabase
+          .from('roles')
+          .select('id, name, display_name, level')
+          .eq('id', profile.primary_role_id)
+          .single()
+
+        if (!roleError && roleData) {
+          console.log('✅ Role info loaded:', roleData)
+          ;(profile as any).roles = roleData
+        } else {
+          console.warn('⚠️ Could not load role info:', roleError)
+        }
       }
 
-      console.log('✅ User profile loaded:', {
-        email: userProfile.email,
-        role: userProfile.role,
-        permissions: userProfile.permissions?.length || 0
-      })
+      return profile
 
-      return userProfile
     } catch (error) {
-      console.error('❌ Exception fetching user profile:', error)
+      console.error('❌ Profile fetch exception:', error)
       return null
     }
   }
 
-  // Refresh user profile
   const refreshProfile = async () => {
-    if (!user?.id) return
-
-    const profile = await fetchUserProfile(user.id)
-    setUserProfile(profile)
+    if (user) {
+      console.log('🔄 RefreshProfile: Starting for user:', user.id)
+      const profile = await fetchUserProfile(user.id)
+      console.log('🔄 RefreshProfile: Got profile:', profile)
+      setUserProfile(profile)
+      console.log('🔄 RefreshProfile: Profile set in state')
+    } else {
+      console.log('🔄 RefreshProfile: No user to refresh')
+    }
   }
 
-  useEffect(() => {
-    // Get initial session with timeout protection
-    const getInitialSession = async () => {
-      try {
-        console.log('🔐 AuthContext: Starting initial session check...')
+  // Ensure user profile exists for new users
+  const ensureUserProfile = async (authUser: any) => {
+    try {
+      console.log('🔄 Ensuring user profile exists for:', authUser.id)
 
-        // Add timeout protection for getSession
-        const sessionPromise = supabase.auth.getSession()
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Session check timeout')), 5000)
-        )
+      // Check if profile already exists
+      const { data: existingProfile, error: checkError } = await supabase
+        .from('user_profiles')
+        .select('id')
+        .eq('id', authUser.id)
+        .single()
 
-        const { data: { session } } = await Promise.race([sessionPromise, timeoutPromise]) as any
+      if (checkError && checkError.code === 'PGRST116') {
+        // Profile doesn't exist, create it
+        console.log('🔨 Creating profile for new user:', authUser.email)
 
-        console.log('🔐 AuthContext: Session check complete:', session ? 'Found session' : 'No session')
+        // Get default role (viewer) ID
+        const { data: defaultRole } = await supabase
+          .from('roles')
+          .select('id')
+          .eq('name', 'viewer')
+          .single()
 
-        setSession(session)
-        setUser(session?.user ?? null)
-
-        // Fetch user profile if user exists
-        if (session?.user?.id) {
-          console.log('🔐 AuthContext: Fetching user profile...')
-          const profile = await fetchUserProfile(session.user.id)
-          setUserProfile(profile)
-          console.log('🔐 AuthContext: User profile loaded:', profile ? 'Success' : 'Failed')
+        const newProfile = {
+          id: authUser.id,
+          email: authUser.email || '',
+          full_name: authUser.user_metadata?.full_name || authUser.email || '',
+          role: 'viewer', // Default role for new users
+          primary_role_id: defaultRole?.id || null,
+          is_active: false // New users start as inactive, awaiting admin approval
         }
 
-      } catch (error) {
-        console.error('❌ AuthContext: Error during initial session check:', error)
-        // On error, clear states and continue
-        setSession(null)
-        setUser(null)
-        setUserProfile(null)
-      } finally {
-        // Always set loading to false, even on error
-        console.log('🔐 AuthContext: Initial session check completed, setting loading=false')
-        setLoading(false)
+        const { error: createError } = await supabase
+          .from('user_profiles')
+          .insert(newProfile)
+
+        if (createError) {
+          console.error('❌ Error creating user profile:', createError)
+        } else {
+          console.log('✅ User profile created successfully for:', authUser.email)
+        }
+      } else if (!checkError) {
+        console.log('✅ User profile already exists')
+      } else {
+        console.error('❌ Error checking user profile:', checkError)
       }
+
+    } catch (error) {
+      console.error('❌ Exception in ensureUserProfile:', error)
     }
+  }
 
-    getInitialSession()
+  // Initialize auth
+  useEffect(() => {
+    let mounted = true
+    let initTimeout: NodeJS.Timeout
 
-    // Emergency timeout to prevent stuck loading state
-    const emergencyTimeout = setTimeout(() => {
-      console.warn('⚠️ AuthContext: Emergency timeout triggered - forcing loading=false')
-      setLoading(false)
-    }, 10000) // 10 seconds emergency timeout
+    const initializeAuth = async () => {
+      try {
+        setInitCount(prev => {
+          const newCount = prev + 1
+          console.log('🔐 AuthContext: Initializing... (attempt', newCount, ')')
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('🔐 Auth state changed:', event, session?.user?.email)
+          // Prevent infinite loops - max 3 attempts
+          if (newCount > 3) {
+            console.error('❌ Too many initialization attempts, stopping to prevent loop')
+            setLoading(false)
+            return newCount
+          }
+          return newCount
+        })
 
-        // Handle different auth events
-        if (event === 'SIGNED_OUT') {
-          console.log('🔓 User signed out - clearing all state')
+        // Add timeout protection (2 seconds max)
+        const initPromise = supabase.auth.getSession()
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Auth init timeout')), 2000)
+        )
+
+        let currentSession: any = null
+
+        try {
+          const result = await Promise.race([initPromise, timeoutPromise])
+          currentSession = result.data.session
+        } catch (timeoutError) {
+          console.warn('⚠️ AuthContext: Init timeout - likely cache conflict')
+          console.warn('💡 Suggestion: Clear browser cache or use incognito mode')
+          // Continue with null session to allow normal flow
+          currentSession = null
+        }
+
+        if (mounted) {
+          setSession(currentSession)
+          setUser(currentSession?.user ?? null)
+
+          if (currentSession?.user) {
+            console.log('🔄 Init: Fetching profile for:', currentSession.user.id)
+
+            // Add profile fetch timeout (2 seconds max)
+            const profilePromise = fetchUserProfile(currentSession.user.id)
+            const profileTimeoutPromise = new Promise<UserProfile | null>((_, reject) =>
+              setTimeout(() => reject(new Error('Profile fetch timeout')), 2000)
+            )
+
+            try {
+              const profile = await Promise.race([profilePromise, profileTimeoutPromise])
+              console.log('🔄 Init: Got profile:', profile)
+              if (mounted) {
+                setUserProfile(profile)
+                console.log('🔄 Init: Profile set in state')
+              }
+            } catch (profileError) {
+              console.warn('⚠️ Profile fetch timeout, continuing without profile')
+              if (mounted) {
+                setUserProfile(null)
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('❌ Auth initialization error:', error)
+        // On timeout, proceed without authentication
+        if (mounted) {
           setSession(null)
           setUser(null)
           setUserProfile(null)
-          setLoading(false)
-          return
         }
+      } finally {
+        if (mounted) {
+          setLoading(false)
+          console.log('✅ AuthContext: Initialization complete')
+        }
+      }
+    }
 
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          console.log(`🔐 ${event} - updating session and profile`)
-          setSession(session)
-          setUser(session?.user ?? null)
+    // Delay initialization slightly to prevent rapid reload loops
+    initTimeout = setTimeout(initializeAuth, 100)
 
-          // Fetch user profile if user exists
-          if (session?.user?.id) {
-            const profile = await fetchUserProfile(session.user.id)
-            setUserProfile(profile)
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, currentSession) => {
+        console.log('🔐 AuthContext: Auth state changed:', event)
+
+        if (mounted) {
+          setSession(currentSession)
+          setUser(currentSession?.user ?? null)
+
+          if (currentSession?.user) {
+            console.log('🔄 Auth state change: Fetching profile for:', currentSession.user.id)
+
+            // Special handling for SIGNED_IN event (new registration or login)
+            if (event === 'SIGNED_IN') {
+              await ensureUserProfile(currentSession.user)
+            }
+
+            const profile = await fetchUserProfile(currentSession.user.id)
+            console.log('🔄 Auth state change: Got profile:', profile)
+            if (mounted) {
+              setUserProfile(profile)
+              console.log('🔄 Auth state change: Profile set in state')
+            }
           } else {
+            console.log('🔄 Auth state change: No user, clearing profile')
             setUserProfile(null)
           }
-        } else {
-          // For other events, just update session/user without profile fetch
-          setSession(session)
-          setUser(session?.user ?? null)
         }
-
-        setLoading(false)
       }
     )
 
     return () => {
+      mounted = false
+      if (initTimeout) clearTimeout(initTimeout)
       subscription.unsubscribe()
-      clearTimeout(emergencyTimeout)
     }
   }, [])
 
   const login = async (email: string, password: string) => {
-    try {
-      setLoading(true)
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password
-      })
-
-      if (error) {
-        console.error('❌ Login error:', error)
-      } else {
-        console.log('✅ Login successful for:', email)
-      }
-
-      return { error }
-    } catch (error) {
-      console.error('❌ Login exception:', error)
-      return { error: error as AuthError }
-    } finally {
-      setLoading(false)
-    }
+    console.log('🔐 AuthContext: Logging in...')
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    return { error }
   }
 
   const register = async (email: string, password: string, metadata?: any) => {
-    try {
-      setLoading(true)
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: metadata
-        }
-      })
-
-      if (error) {
-        console.error('❌ Registration error:', error)
-      } else {
-        console.log('✅ Registration successful for:', email)
-      }
-
-      return { error }
-    } catch (error) {
-      console.error('❌ Registration exception:', error)
-      return { error: error as AuthError }
-    } finally {
-      setLoading(false)
-    }
+    console.log('🔐 AuthContext: Registering...')
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: metadata }
+    })
+    return { error }
   }
 
   const logout = async () => {
     try {
-      console.log('🔓 Starting logout process...')
+      console.log('🔐 AuthContext: Starting logout process...')
 
-      // Clear state first to prevent loops
+      // Clear profile immediately
       setUserProfile(null)
       setUser(null)
       setSession(null)
 
-      // Then sign out
+      // Sign out from Supabase
       const { error } = await supabase.auth.signOut()
 
       if (error) {
         console.error('❌ Logout error:', error)
-        throw error
+        // Even if signOut fails, we've cleared local state
+      } else {
+        console.log('✅ Logout successful')
       }
 
-      console.log('✅ Logout successful - state cleared')
+      // Force page reload to ensure clean state
+      window.location.href = '/'
+
     } catch (error) {
-      console.error('❌ Logout exception:', error)
-      // Reset loading state on error
-      setLoading(false)
+      console.error('❌ Exception during logout:', error)
+      // Force logout anyway
+      setUserProfile(null)
+      setUser(null)
+      setSession(null)
+      window.location.href = '/'
     }
   }
 
   const resetPassword = async (email: string) => {
-    try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`
-      })
-
-      if (error) {
-        console.error('❌ Reset password error:', error)
-      } else {
-        console.log('✅ Reset password email sent to:', email)
-      }
-
-      return { error }
-    } catch (error) {
-      console.error('❌ Reset password exception:', error)
-      return { error: error as AuthError }
-    }
+    console.log('🔐 AuthContext: Resetting password...')
+    const { error } = await supabase.auth.resetPasswordForEmail(email)
+    return { error }
   }
 
-  // Helper functions for permissions
   const hasPermission = (permission: string): boolean => {
-    if (!userProfile?.permissions) return false
-    return userProfile.permissions.includes(permission)
+    // Simple permission check based on role
+    const role = userProfile?.role
+
+    if (role === 'admin') return true
+    if (role === 'manager' && ['read', 'write'].includes(permission)) return true
+    if (role === 'viewer' && permission === 'read') return true
+
+    return false
   }
 
   const isAdmin = (): boolean => {
     return userProfile?.role === 'admin'
   }
 
-  const value = {
+  const value: AuthContextType = {
     user,
     userProfile,
     session,
@@ -331,12 +434,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     isAdmin
   }
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  )
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
-export { supabase }
-export default AuthContext
+export { AuthProvider }
+export default AuthProvider

@@ -1,13 +1,17 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react'
+import React, { createContext, useContext, useEffect, useState, ReactNode, useRef } from 'react'
 import { Project, ProjectWithMembers, CreateProjectData } from '../types/project'
 import { ProjectService } from '../services/projectService'
+import { ProjectMemberService, type UserPermissions } from '../services/projectMemberService'
 import { useAuth } from './AuthContext'
+import { supabase } from '../lib/supabase'
 
 interface ProjectContextType {
   // Current project state
   currentProject: Project | null
   projects: ProjectWithMembers[]
   loading: boolean
+  currentProjectPermissions: UserPermissions
+  userRole: string
 
   // Actions
   setCurrentProject: (project: Project | null) => void
@@ -18,6 +22,10 @@ interface ProjectContextType {
   restoreProject: (projectId: string) => Promise<boolean>
   switchProject: (projectId: string) => Promise<void>
 
+  // Permission helpers
+  checkPermission: (permission: keyof UserPermissions) => boolean
+  canManageProject: () => boolean
+
   // Project selection state
   showProjectSelector: boolean
   setShowProjectSelector: (show: boolean) => void
@@ -27,6 +35,15 @@ const ProjectContext = createContext<ProjectContextType>({
   currentProject: null,
   projects: [],
   loading: true,
+  currentProjectPermissions: {
+    can_manage_members: false,
+    can_edit_project: false,
+    can_delete_project: false,
+    can_manage_woocommerce: false,
+    can_edit_products: false,
+    can_view_analytics: false
+  },
+  userRole: 'none',
   setCurrentProject: () => {},
   loadProjects: async () => {},
   createProject: async () => null,
@@ -34,6 +51,8 @@ const ProjectContext = createContext<ProjectContextType>({
   deleteProject: async () => false,
   restoreProject: async () => false,
   switchProject: async () => {},
+  checkPermission: () => false,
+  canManageProject: () => false,
   showProjectSelector: false,
   setShowProjectSelector: () => {}
 })
@@ -50,26 +69,50 @@ interface ProjectProviderProps {
   children: ReactNode
 }
 
-export const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) => {
+const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) => {
   const [currentProject, setCurrentProject] = useState<Project | null>(null)
   const [projects, setProjects] = useState<ProjectWithMembers[]>([])
   const [loading, setLoading] = useState(true)
   const [showProjectSelector, setShowProjectSelector] = useState(false)
+  const [currentProjectPermissions, setCurrentProjectPermissions] = useState<UserPermissions>({
+    can_manage_members: false,
+    can_edit_project: false,
+    can_delete_project: false,
+    can_manage_woocommerce: false,
+    can_edit_products: false,
+    can_view_analytics: false
+  })
+  const [userRole, setUserRole] = useState<string>('none')
 
   const { user, userProfile } = useAuth()
+
+  // Use refs to track previous values to prevent unnecessary reloads
+  const prevUserIdRef = useRef<string>()
+  const prevUserRoleRef = useRef<string>()
+  const loadingProjectsRef = useRef(false)
 
   // Load all projects for current user (including deleted projects for admin/manager)
   const loadProjects = async (includeDeleted: boolean = false) => {
     if (!user?.id) {
+      console.log('❌ No user ID, clearing projects')
       setProjects([])
       setCurrentProject(null)
       setLoading(false)
       return
     }
 
+    // Prevent concurrent loading
+    if (loadingProjectsRef.current) {
+      console.log('⏳ Already loading projects, skipping...')
+      return
+    }
+
     try {
+      loadingProjectsRef.current = true
       setLoading(true)
-      console.log('🔄 Loading projects for user:', user.email)
+      console.log('🔄 ProjectContext: Starting loadProjects for user:', user.email)
+      console.log('🔍 User state:', { id: user.id, email: user.email })
+      console.log('🔍 UserProfile state:', userProfile)
 
       // For admin/manager users, ALWAYS include deleted projects (unless explicitly requested not to)
       // If userProfile not loaded yet, assume admin for safety (will reload when profile loads)
@@ -86,13 +129,48 @@ export const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) =>
         profileLoaded: !!userProfile
       })
 
-      // Add timeout to prevent infinite loading
+      // Add timeout to prevent infinite loading (reduced to 3s for faster recovery)
       const loadPromise = ProjectService.getUserProjects(shouldIncludeDeleted)
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Project loading timed out after 15 seconds')), 15000)
+        setTimeout(() => reject(new Error('Project loading timed out after 3 seconds')), 3000)
       )
 
-      const userProjects = await Promise.race([loadPromise, timeoutPromise]) as ProjectWithMembers[]
+      let userProjects: ProjectWithMembers[] = []
+
+      try {
+        userProjects = await Promise.race([loadPromise, timeoutPromise]) as ProjectWithMembers[]
+      } catch (timeoutError) {
+        console.warn('⚠️ Primary project query timed out, trying fallback...')
+
+        // Fallback: Try simplified direct query without complex filters
+        try {
+          const { data: simpleProjects, error: fallbackError } = await supabase
+            .from('projects')
+            .select(`
+              id,
+              name,
+              description,
+              is_active,
+              deleted_at,
+              created_at,
+              updated_at,
+              created_by
+            `)
+            .eq('is_active', true)
+            .is('deleted_at', null)
+            .limit(20) // Further reduced limit
+            .order('created_at', { ascending: false })
+
+          if (fallbackError) throw fallbackError
+
+          console.log('✅ Fallback query succeeded, got', simpleProjects?.length || 0, 'projects')
+          userProjects = simpleProjects || []
+        } catch (fallbackError) {
+          console.error('❌ Even fallback query failed:', fallbackError)
+          console.warn('⚠️ Continuing with empty projects array to allow app to function')
+          userProjects = [] // Continue with empty array instead of throwing
+        }
+      }
       setProjects(userProjects)
 
       console.log('✅ Loaded projects:', userProjects.length)
@@ -162,6 +240,7 @@ export const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) =>
       setShowProjectSelector(true) // Show selector to allow manual creation/retry
     } finally {
       setLoading(false)
+      loadingProjectsRef.current = false
     }
   }
 
@@ -343,9 +422,13 @@ export const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) =>
 
   // Load projects when user changes
   useEffect(() => {
-    if (user?.id) {
+    const currentUserId = user?.id
+    const prevUserId = prevUserIdRef.current
+
+    if (currentUserId && currentUserId !== prevUserId) {
+      console.log('👤 New user detected, loading projects...', user.email)
       loadProjects()
-    } else {
+    } else if (!currentUserId && prevUserId) {
       // Clear all project state immediately on logout
       console.log('🔓 User logged out - clearing project state')
       setProjects([])
@@ -354,15 +437,26 @@ export const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) =>
       setLoading(false)
       localStorage.removeItem('selectedProjectId')
     }
+
+    prevUserIdRef.current = currentUserId
   }, [user?.id])
 
   // Reload projects when userProfile role changes (to include/exclude deleted projects)
   useEffect(() => {
-    if (user?.id && userProfile?.role) {
-      console.log('🔄 User role loaded/changed, reloading projects...', userProfile.role)
+    const currentUserRole = userProfile?.role
+    const prevUserRole = prevUserRoleRef.current
+
+    // Only reload if:
+    // 1. User is logged in
+    // 2. Profile has been loaded at least once (even if role is undefined)
+    // 3. Role actually changed
+    if (user?.id && userProfile !== null && currentUserRole !== prevUserRole) {
+      console.log('🔄 User role changed, reloading projects...', prevUserRole, '=>', currentUserRole)
       loadProjects()
     }
-  }, [userProfile?.role])
+
+    prevUserRoleRef.current = currentUserRole
+  }, [userProfile?.role, user?.id, userProfile])
 
   // Auto-load saved project on mount
   useEffect(() => {
@@ -378,10 +472,67 @@ export const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) =>
     }
   }, [projects])
 
+  // Load permissions when current project changes
+  useEffect(() => {
+    const loadCurrentProjectPermissions = async () => {
+      if (!currentProject || !user?.id) {
+        setCurrentProjectPermissions({
+          can_manage_members: false,
+          can_edit_project: false,
+          can_delete_project: false,
+          can_manage_woocommerce: false,
+          can_edit_products: false,
+          can_view_analytics: false
+        })
+        setUserRole('none')
+        return
+      }
+
+      try {
+        const [permissions, role] = await Promise.all([
+          ProjectMemberService.getUserProjectPermissions(currentProject.id, user.id),
+          ProjectMemberService.getUserProjectRole(currentProject.id, user.id)
+        ])
+
+        setCurrentProjectPermissions(permissions)
+        setUserRole(role)
+
+        console.log('🔐 Loaded permissions for project:', currentProject.name, {
+          role,
+          permissions
+        })
+      } catch (error) {
+        console.error('❌ Error loading project permissions:', error)
+        setCurrentProjectPermissions({
+          can_manage_members: false,
+          can_edit_project: false,
+          can_delete_project: false,
+          can_manage_woocommerce: false,
+          can_edit_products: false,
+          can_view_analytics: false
+        })
+        setUserRole('none')
+      }
+    }
+
+    loadCurrentProjectPermissions()
+  }, [currentProject, user?.id])
+
+  // Helper functions
+  const checkPermission = (permission: keyof UserPermissions): boolean => {
+    return currentProjectPermissions[permission] || false
+  }
+
+  const canManageProject = (): boolean => {
+    return checkPermission('can_edit_project') || checkPermission('can_delete_project')
+  }
+
   const value = {
     currentProject,
     projects,
     loading,
+    currentProjectPermissions,
+    userRole,
     setCurrentProject,
     loadProjects,
     createProject,
@@ -389,6 +540,8 @@ export const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) =>
     deleteProject,
     restoreProject,
     switchProject,
+    checkPermission,
+    canManageProject,
     showProjectSelector,
     setShowProjectSelector
   }
@@ -400,4 +553,5 @@ export const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) =>
   )
 }
 
-export default ProjectContext
+export { ProjectProvider }
+export default ProjectProvider

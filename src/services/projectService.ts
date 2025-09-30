@@ -120,10 +120,69 @@ export class ProjectService {
   // Lấy tất cả projects của user hiện tại (bao gồm cả projects đã xóa cho admin)
   static async getUserProjects(includeDeleted: boolean = false): Promise<ProjectWithMembers[]> {
     try {
-      console.log('🔍 Starting getUserProjects with includeDeleted:', includeDeleted)
+      console.log('🔍 ProjectService: Starting getUserProjects with includeDeleted:', includeDeleted)
 
-      // Check if table exists first
-      console.log('🔍 Checking if projects table exists...')
+      // Check authentication first with timeout
+      console.log('🔍 Checking authentication...')
+      const authPromise = supabase.auth.getSession()
+      const authTimeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Auth check timeout')), 3000)
+      )
+
+      let session: any = null
+      let authError: any = null
+
+      try {
+        const result = await Promise.race([authPromise, authTimeout])
+        session = result.data.session
+        authError = result.error
+      } catch (timeoutError) {
+        console.warn('⚠️ Auth check timed out, likely cache conflict. Try clearing browser cache.')
+        console.warn('💡 Suggestion: Use incognito mode or clear cache via Ctrl+Shift+Delete')
+        throw new Error('Authentication timeout - likely cache conflict. Please clear browser cache and try again.')
+      }
+
+      if (authError) {
+        console.error('❌ Auth check failed:', authError)
+        throw new Error('Authentication failed: ' + authError.message)
+      }
+
+      if (!session?.user) {
+        console.error('❌ No authenticated user found')
+        throw new Error('User not authenticated - please login first')
+      }
+
+      console.log('✅ User authenticated:', session.user.email)
+
+      // Quick test query to check database connection and RLS with timeout
+      console.log('🔍 Testing database connection with RLS...')
+      const testStartTime = Date.now()
+
+      const dbTestPromise = supabase
+        .from('projects')
+        .select('count')
+        .limit(1)
+
+      const dbTestTimeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Database test timeout')), 5000)
+      )
+
+      const { data: testData, error: testError } = await Promise.race([dbTestPromise, dbTestTimeout])
+
+      console.log('🔍 Test query completed in', Date.now() - testStartTime, 'ms')
+
+      if (testError) {
+        console.error('❌ Database/RLS test failed:', testError)
+        console.error('❌ Error details:', {
+          message: testError.message,
+          details: testError.details,
+          hint: testError.hint,
+          code: testError.code
+        })
+        throw testError
+      }
+
+      console.log('✅ Database connection and RLS test passed')
 
       let query = supabase
         .from('projects')
@@ -142,7 +201,12 @@ export class ProjectService {
         query = query.or(`deleted_at.is.null,and(is_active.eq.false,deleted_at.gte.${sevenDaysAgo})`)
       }
 
-      const { data: projects, error } = await query
+      // Add timeout for main project query
+      const queryTimeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Project query timeout')), 8000)
+      )
+
+      const { data: projects, error } = await Promise.race([query, queryTimeout])
 
       if (error) {
         console.error('❌ Error fetching user projects:')

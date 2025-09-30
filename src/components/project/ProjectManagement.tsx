@@ -3,6 +3,7 @@ import { useProject } from '../../contexts/ProjectContext'
 import { useAuth } from '../../contexts/AuthContext'
 import { Project, UpdateProjectData } from '../../types/project'
 import DeletedProjectBanner from './DeletedProjectBanner'
+import ProjectMemberManagement from './ProjectMemberManagement'
 
 interface ProjectManagementProps {
   onClose?: () => void
@@ -31,6 +32,7 @@ export default function ProjectManagement({ onClose }: ProjectManagementProps) {
   const [saving, setSaving] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [showMemberManagement, setShowMemberManagement] = useState<{ projectId: string, projectName: string } | null>(null)
 
   // Reset form when editing project changes
   useEffect(() => {
@@ -438,6 +440,16 @@ export default function ProjectManagement({ onClose }: ProjectManagementProps) {
                   </div>
 
                   <div className="flex items-center space-x-2 ml-4">
+                    {/* Member Management Button */}
+                    {!isDeleted && (
+                      <button
+                        onClick={() => setShowMemberManagement({ projectId: project.id, projectName: project.name })}
+                        className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700"
+                      >
+                        👥 Thành viên
+                      </button>
+                    )}
+
                     {/* Only disable edit button for deleted projects, allow editing inactive projects */}
                     {!isDeleted && canEditProject(project) && (
                       <button
@@ -524,6 +536,15 @@ export default function ProjectManagement({ onClose }: ProjectManagementProps) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Project Member Management Modal */}
+      {showMemberManagement && (
+        <ProjectMemberManagement
+          projectId={showMemberManagement.projectId}
+          projectName={showMemberManagement.projectName}
+          onClose={() => setShowMemberManagement(null)}
+        />
       )}
     </div>
   )

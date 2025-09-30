@@ -4,8 +4,8 @@ import { useProject } from '../../contexts/ProjectContext'
 import { UserRole } from '../../types/auth'
 
 interface HeaderProps {
-  route: 'dashboard' | 'import' | 'products' | 'logs' | 'admin' | 'projects'
-  setRoute: (route: 'dashboard' | 'import' | 'products' | 'logs' | 'admin' | 'projects') => void
+  route: 'dashboard' | 'import' | 'products' | 'logs' | 'admin' | 'projects' | 'users'
+  setRoute: (route: 'dashboard' | 'import' | 'products' | 'logs' | 'admin' | 'projects' | 'users') => void
 }
 
 export default function Header({ route, setRoute }: HeaderProps) {
@@ -50,10 +50,12 @@ export default function Header({ route, setRoute }: HeaderProps) {
   console.log('🔍 Header admin check:', {
     userProfileLoaded: !!userProfile,
     userRole: userProfile?.role,
+    primaryRoleId: userProfile?.primary_role_id,
     cachedRole,
     isAdmin,
     isAdminWithFallback,
-    userEmail: user?.email
+    userEmail: user?.email,
+    showUsersButton: userProfile?.role === 'admin' || userProfile?.role === 'manager'
   })
 
   return (
@@ -179,8 +181,19 @@ export default function Header({ route, setRoute }: HeaderProps) {
             🏢 Projects
           </button>
 
+          {/* User Management - Show ONLY for admin */}
+          {userProfile?.role === 'admin' && (
+            <button
+              className={`px-3 py-1 ${route === 'users' ? 'neo-btn primary' : 'neo-btn'} border-blue-300 text-blue-700 hover:bg-blue-50`}
+              onClick={() => setRoute('users')}
+              title="User Management (Admin Only)"
+            >
+              👥 Users
+            </button>
+          )}
+
           {/* Admin Settings - Only show for admin users */}
-          {isAdminWithFallback && (
+          {userProfile?.role === 'admin' && (
             <button
               className={`px-3 py-1 ${route === 'admin' ? 'neo-btn primary' : 'neo-btn'} border-red-300 text-red-700 hover:bg-red-50`}
               onClick={() => setRoute('admin')}

@@ -8,8 +8,10 @@ import ImportPage from './components/ImportPage'
 import ProductsPage from './components/ProductsPage'
 import UpdateLogsPage from './components/UpdateLogsPage'
 import AdminSettings from './components/admin/AdminSettings'
+import UserManagement from './components/admin/UserManagement'
 import Dashboard from './components/Dashboard'
 import ProjectManagement from './components/project/ProjectManagement'
+import UserRoleDebug from './components/debug/UserRoleDebug'
 import { CSVRow, ProductData } from './types'
 import { smartMapCSVData } from './utils/smartCSVMapper'
 import './scripts/debugLoading' // Auto-run debug on app load
@@ -18,7 +20,7 @@ import './scripts/testConnection' // Test Supabase connection
 function ProjectApp() {
   const [rows, setRows] = useState<ProductData[]>([])
   const [errors, setErrors] = useState<any[]>([])
-  const [route, setRoute] = useState<'dashboard'|'import'|'products'|'logs'|'admin'|'projects'>('dashboard')
+  const [route, setRoute] = useState<'dashboard'|'import'|'products'|'logs'|'admin'|'projects'|'users'>('dashboard')
   const [refreshKey, setRefreshKey] = useState(0)
 
   const { currentProject, showProjectSelector } = useProject()
@@ -60,6 +62,8 @@ function ProjectApp() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Debug component - remove in production */}
+      <UserRoleDebug />
       <Header route={route} setRoute={setRoute} />
 
       <main className="container mx-auto p-4">
@@ -91,10 +95,15 @@ function ProjectApp() {
           <AdminSettings />
         ) : route === 'projects' ? (
           <ProjectManagement />
+        ) : route === 'users' ? (
+          <UserManagement />
         ) : (
           <UpdateLogsPage />
         )}
       </main>
+
+      {/* Debug component - show user role info */}
+      <UserRoleDebug />
     </div>
   )
 }
