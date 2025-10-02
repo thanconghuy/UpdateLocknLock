@@ -1,20 +1,13 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode, useRef } from 'react'
 import { Project, ProjectWithMembers, CreateProjectData } from '../types/project'
 import { ProjectService } from '../services/projectService'
-// TODO: Import new ProjectMembersService in Phase 3
-// import { ProjectMembersService, type UserPermissions } from '../services/projectMembers/ProjectMembersService'
+import { projectMembersService } from '../services/projectMembers/ProjectMembersService'
+import { ProjectPermissions } from '../types/projectRoles'
 import { useAuth } from './AuthContext'
 import { supabase } from '../lib/supabase'
 
-// Temporary UserPermissions type (will be replaced in Phase 3)
-export interface UserPermissions {
-  can_manage_members: boolean
-  can_edit_project: boolean
-  can_delete_project: boolean
-  can_manage_woocommerce: boolean
-  can_edit_products: boolean
-  can_view_analytics: boolean
-}
+// Re-export for backward compatibility
+export type UserPermissions = ProjectPermissions
 
 interface ProjectContextType {
   // Current project state
