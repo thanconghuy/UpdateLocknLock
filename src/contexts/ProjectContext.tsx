@@ -1,9 +1,20 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode, useRef } from 'react'
 import { Project, ProjectWithMembers, CreateProjectData } from '../types/project'
 import { ProjectService } from '../services/projectService'
-import { ProjectMemberService, type UserPermissions } from '../services/projectMemberService'
+// TODO: Import new ProjectMembersService in Phase 3
+// import { ProjectMembersService, type UserPermissions } from '../services/projectMembers/ProjectMembersService'
 import { useAuth } from './AuthContext'
 import { supabase } from '../lib/supabase'
+
+// Temporary UserPermissions type (will be replaced in Phase 3)
+export interface UserPermissions {
+  can_manage_members: boolean
+  can_edit_project: boolean
+  can_delete_project: boolean
+  can_manage_woocommerce: boolean
+  can_edit_products: boolean
+  can_view_analytics: boolean
+}
 
 interface ProjectContextType {
   // Current project state
@@ -489,9 +500,11 @@ const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) => {
       }
 
       try {
+        // TODO: Re-enable permission loading in Phase 3
+        /*
         const [permissions, role] = await Promise.all([
-          ProjectMemberService.getUserProjectPermissions(currentProject.project_id, user.id),
-          ProjectMemberService.getUserProjectRole(currentProject.project_id, user.id)
+          ProjectMembersService.getUserProjectPermissions(currentProject.project_id, user.id),
+          ProjectMembersService.getUserProjectRole(currentProject.project_id, user.id)
         ])
 
         setCurrentProjectPermissions(permissions)
@@ -501,6 +514,30 @@ const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) => {
           role,
           permissions
         })
+        */
+
+        // Temporary: Give admin full permissions
+        if (userProfile?.role === 'admin') {
+          setCurrentProjectPermissions({
+            can_manage_members: true,
+            can_edit_project: true,
+            can_delete_project: true,
+            can_manage_woocommerce: true,
+            can_edit_products: true,
+            can_view_analytics: true
+          })
+          setUserRole('admin')
+        } else {
+          setCurrentProjectPermissions({
+            can_manage_members: false,
+            can_edit_project: false,
+            can_delete_project: false,
+            can_manage_woocommerce: false,
+            can_edit_products: false,
+            can_view_analytics: false
+          })
+          setUserRole('none')
+        }
       } catch (error) {
         console.error('❌ Error loading project permissions:', error)
         setCurrentProjectPermissions({
