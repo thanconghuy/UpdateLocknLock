@@ -32,7 +32,7 @@ export interface Project {
   deleted_at?: string | null  // 🆕 For 2-tier deletion strategy
 
   // User's role in this project (populated from project_members)
-  user_role?: 'admin' | 'manager' | 'editor' | 'viewer'
+  user_role?: 'admin' | 'manager' | 'product_editor' | 'project_viewer' | 'viewer'
 }
 
 // 🆕 WooCommerce Store Entity

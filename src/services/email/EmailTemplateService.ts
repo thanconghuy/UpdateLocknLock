@@ -307,14 +307,14 @@ export class EmailTemplateService {
       const template = templateResult.data
 
       // Render subject
-      const subject = this.interpolateVariables(template.subject, variables)
+      const subject = this.interpolateVariables(template.subject, variables as Record<string, string>)
 
       // Render HTML body
-      const html = this.interpolateVariables(template.body_html, variables)
+      const html = this.interpolateVariables(template.body_html, variables as Record<string, string>)
 
       // Render text body (optional)
       const text = template.body_text
-        ? this.interpolateVariables(template.body_text, variables)
+        ? this.interpolateVariables(template.body_text, variables as Record<string, string>)
         : undefined
 
       console.log(`✅ Template rendered: ${templateKey}`)

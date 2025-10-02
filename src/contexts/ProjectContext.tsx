@@ -168,7 +168,7 @@ const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) => {
           if (fallbackError) throw fallbackError
 
           console.log('✅ Fallback query succeeded, got', simpleProjects?.length || 0, 'projects')
-          userProjects = simpleProjects || []
+          userProjects = (simpleProjects as any) || []
         } catch (fallbackError) {
           console.error('❌ Even fallback query failed:', fallbackError)
           console.warn('⚠️ Continuing with empty projects array to allow app to function')
