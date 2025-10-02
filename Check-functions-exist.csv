@@ -1,0 +1,6 @@
+function_name,signature
+add_project_member,"p_project_id integer, p_user_id uuid, p_role character varying, p_invited_by uuid, p_permissions jsonb"
+can_user_manage_members,"p_project_id integer, p_user_id uuid"
+get_project_members_for_user,"p_project_id integer, p_user_id uuid"
+get_user_project_permissions,"p_project_id integer, p_user_id uuid"
+get_user_project_role,"p_project_id integer, p_user_id uuid"

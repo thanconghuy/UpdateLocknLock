@@ -32,7 +32,7 @@ export default function ProjectManagement({ onClose }: ProjectManagementProps) {
   const [saving, setSaving] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
-  const [showMemberManagement, setShowMemberManagement] = useState<{ projectId: string, projectName: string } | null>(null)
+  const [showMemberManagement, setShowMemberManagement] = useState<{ projectId: number, projectName: string } | null>(null)
 
   // Reset form when editing project changes
   useEffect(() => {
@@ -443,7 +443,7 @@ export default function ProjectManagement({ onClose }: ProjectManagementProps) {
                     {/* Member Management Button */}
                     {!isDeleted && (
                       <button
-                        onClick={() => setShowMemberManagement({ projectId: project.id, projectName: project.name })}
+                        onClick={() => setShowMemberManagement({ projectId: project.project_id, projectName: project.name })}
                         className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700"
                       >
                         👥 Thành viên

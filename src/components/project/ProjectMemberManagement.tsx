@@ -3,7 +3,7 @@ import { ProjectMemberService, type ProjectRole, type UserPermissions } from '..
 import type { ProjectMember } from '../../types/project'
 
 interface ProjectMemberManagementProps {
-  projectId: string
+  projectId: number
   projectName: string
   onClose: () => void
 }
@@ -11,6 +11,12 @@ interface ProjectMemberManagementProps {
 export default function ProjectMemberManagement({ projectId, projectName, onClose }: ProjectMemberManagementProps) {
   const [members, setMembers] = useState<ProjectMember[]>([])
   const [roles, setRoles] = useState<ProjectRole[]>([])
+  const [availableUsers, setAvailableUsers] = useState<Array<{
+    id: string
+    email: string
+    full_name: string | null
+    role: string
+  }>>([])
   const [userPermissions, setUserPermissions] = useState<UserPermissions>({
     can_manage_members: false,
     can_edit_project: false,
@@ -21,7 +27,7 @@ export default function ProjectMemberManagement({ projectId, projectName, onClos
   })
   const [loading, setLoading] = useState(true)
   const [showAddMember, setShowAddMember] = useState(false)
-  const [newMemberEmail, setNewMemberEmail] = useState('')
+  const [selectedUserId, setSelectedUserId] = useState('')
   const [newMemberRole, setNewMemberRole] = useState('viewer')
   const [adding, setAdding] = useState(false)
 
@@ -32,17 +38,20 @@ export default function ProjectMemberManagement({ projectId, projectName, onClos
   const loadData = async () => {
     setLoading(true)
     try {
-      const [membersData, rolesData, permissionsData] = await Promise.all([
+      const [membersData, rolesData, permissionsData, usersData] = await Promise.all([
         ProjectMemberService.getProjectMembers(projectId),
         ProjectMemberService.getAvailableRoles(),
-        ProjectMemberService.getUserProjectPermissions(projectId)
+        ProjectMemberService.getUserProjectPermissions(projectId),
+        ProjectMemberService.getAvailableUsers(projectId)
       ])
 
       setMembers(membersData)
       setRoles(rolesData)
       setUserPermissions(permissionsData)
+      setAvailableUsers(usersData)
     } catch (error) {
       console.error('❌ Error loading member data:', error)
+      alert('❌ Có lỗi khi tải dữ liệu. Vui lòng kiểm tra console.')
     } finally {
       setLoading(false)
     }
@@ -50,21 +59,26 @@ export default function ProjectMemberManagement({ projectId, projectName, onClos
 
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!newMemberEmail.trim()) return
+    if (!selectedUserId) {
+      alert('⚠️ Vui lòng chọn user')
+      return
+    }
 
     setAdding(true)
     try {
-      // Tạo lời mời thay vì thêm trực tiếp
-      await ProjectMemberService.createInvitation(projectId, newMemberEmail.trim(), newMemberRole)
+      // Thêm thành viên trực tiếp
+      await ProjectMemberService.addProjectMember(projectId, selectedUserId, newMemberRole)
 
-      alert(`✅ Đã gửi lời mời tham gia project đến ${newMemberEmail}`)
-      setNewMemberEmail('')
+      const selectedUser = availableUsers.find(u => u.id === selectedUserId)
+      alert(`✅ Đã thêm ${selectedUser?.full_name || selectedUser?.email} vào project`)
+
+      setSelectedUserId('')
       setNewMemberRole('viewer')
       setShowAddMember(false)
       await loadData() // Reload để cập nhật danh sách
-    } catch (error) {
-      console.error('❌ Error sending invitation:', error)
-      alert('❌ Có lỗi khi gửi lời mời. Vui lòng thử lại.')
+    } catch (error: any) {
+      console.error('❌ Error adding member:', error)
+      alert(`❌ ${error.message || 'Có lỗi khi thêm thành viên. Vui lòng thử lại.'}`)
     } finally {
       setAdding(false)
     }
@@ -104,6 +118,7 @@ export default function ProjectMemberManagement({ projectId, projectName, onClos
       case 'manager': return 'bg-blue-100 text-blue-800'
       case 'product_editor': return 'bg-green-100 text-green-800'
       case 'project_viewer': return 'bg-yellow-100 text-yellow-800'
+      case 'viewer': return 'bg-gray-100 text-gray-800'
       default: return 'bg-gray-100 text-gray-800'
     }
   }
@@ -167,54 +182,74 @@ export default function ProjectMemberManagement({ projectId, projectName, onClos
           {/* Add Member Form */}
           {showAddMember && userPermissions.can_manage_members && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-              <h3 className="font-medium text-blue-900 mb-3">📧 Gửi lời mời tham gia</h3>
-              <form onSubmit={handleAddMember} className="space-y-3">
-                <div>
-                  <label className="block text-sm font-medium text-blue-800 mb-1">
-                    Email người dùng
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    value={newMemberEmail}
-                    onChange={(e) => setNewMemberEmail(e.target.value)}
-                    className="w-full px-3 py-2 border border-blue-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="user@example.com"
-                  />
+              <h3 className="font-medium text-blue-900 mb-3">➕ Thêm thành viên mới</h3>
+
+              {availableUsers.length === 0 ? (
+                <div className="bg-yellow-50 border border-yellow-200 rounded p-3 mb-3">
+                  <p className="text-yellow-800 text-sm">
+                    ⚠️ Không có user nào khả dụng để thêm. Tất cả users đã là thành viên của project này.
+                  </p>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-blue-800 mb-1">
-                    Vai trò
-                  </label>
-                  <select
-                    value={newMemberRole}
-                    onChange={(e) => setNewMemberRole(e.target.value)}
-                    className="w-full px-3 py-2 border border-blue-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    {roles.map(role => (
-                      <option key={role.name} value={role.name}>
-                        {role.display_name} - {role.description}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex space-x-3">
-                  <button
-                    type="submit"
-                    disabled={adding || !newMemberEmail.trim()}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-blue-300"
-                  >
-                    {adding ? 'Đang gửi...' : 'Gửi lời mời'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowAddMember(false)}
-                    className="px-4 py-2 border border-blue-300 text-blue-700 rounded-md hover:bg-blue-50"
-                  >
-                    Hủy
-                  </button>
-                </div>
-              </form>
+              ) : (
+                <form onSubmit={handleAddMember} className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-blue-800 mb-1">
+                      Chọn người dùng *
+                    </label>
+                    <select
+                      required
+                      value={selectedUserId}
+                      onChange={(e) => setSelectedUserId(e.target.value)}
+                      className="w-full px-3 py-2 border border-blue-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">-- Chọn user --</option>
+                      {availableUsers.map(user => (
+                        <option key={user.id} value={user.id}>
+                          {user.full_name || user.email} ({user.email}) - System role: {user.role}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-blue-600 mt-1">
+                      Hiển thị {availableUsers.length} user chưa là thành viên
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-blue-800 mb-1">
+                      Vai trò trong project *
+                    </label>
+                    <select
+                      value={newMemberRole}
+                      onChange={(e) => setNewMemberRole(e.target.value)}
+                      className="w-full px-3 py-2 border border-blue-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      {roles.map(role => (
+                        <option key={role.name} value={role.name}>
+                          {role.display_name} - {role.description}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex space-x-3">
+                    <button
+                      type="submit"
+                      disabled={adding || !selectedUserId}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-blue-300 transition-colors"
+                    >
+                      {adding ? '⏳ Đang thêm...' : '✅ Thêm thành viên'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAddMember(false)
+                        setSelectedUserId('')
+                      }}
+                      className="px-4 py-2 border border-blue-300 text-blue-700 rounded-md hover:bg-blue-50 transition-colors"
+                    >
+                      Hủy
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           )}
 

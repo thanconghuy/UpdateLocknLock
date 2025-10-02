@@ -184,29 +184,97 @@ export class ProjectService {
 
       console.log('✅ Database connection and RLS test passed')
 
-      let query = supabase
-        .from('projects')
-        .select('*')
-        .order('created_at', { ascending: false })
+      // Check if user is admin
+      const { data: userProfile } = await supabase
+        .from('user_profiles')
+        .select('role')
+        .eq('id', session.user.id)
+        .single()
 
-      if (!includeDeleted) {
-        // Normal query: active AND inactive projects (but not deleted)
-        console.log('📋 Loading ACTIVE and INACTIVE projects (not deleted)...')
-        query = query.is('deleted_at', null) // Show both active and inactive, but not deleted
+      const isAdmin = userProfile?.role === 'admin'
+      console.log('👤 User role:', userProfile?.role, '| Is Admin:', isAdmin)
+
+      let projects: any[] = []
+      let error: any = null
+
+      if (isAdmin) {
+        // ADMIN: Get ALL projects
+        console.log('🔑 Admin user - loading ALL projects')
+
+        let query = supabase
+          .from('projects')
+          .select('*')
+          .order('created_at', { ascending: false })
+
+        if (!includeDeleted) {
+          console.log('📋 Loading ACTIVE and INACTIVE projects (not deleted)...')
+          query = query.is('deleted_at', null)
+        } else {
+          console.log('📋 Loading ALL projects (including deleted for admin)...')
+          const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+          query = query.or(`deleted_at.is.null,and(is_active.eq.false,deleted_at.gte.${sevenDaysAgo})`)
+        }
+
+        const queryTimeout = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Project query timeout')), 8000)
+        )
+
+        const result = await Promise.race([query, queryTimeout])
+        projects = result.data || []
+        error = result.error
       } else {
-        // Admin query: include soft-deleted projects within 7 days + active + inactive
-        console.log('📋 Loading ALL projects (including deleted for admin)...')
-        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
-        console.log('📅 Seven days ago cutoff:', sevenDaysAgo)
-        query = query.or(`deleted_at.is.null,and(is_active.eq.false,deleted_at.gte.${sevenDaysAgo})`)
+        // NON-ADMIN: Get only projects where user is a member
+        console.log('👥 Non-admin user - loading assigned projects only')
+
+        let query = supabase
+          .from('project_members')
+          .select(`
+            project_id,
+            role,
+            projects!inner (
+              id,
+              project_id,
+              name,
+              description,
+              slug,
+              woocommerce_base_url,
+              woocommerce_consumer_key,
+              woocommerce_consumer_secret,
+              products_table,
+              audit_table,
+              settings,
+              is_active,
+              deleted_at,
+              created_at,
+              updated_at,
+              owner_id
+            )
+          `)
+          .eq('user_id', session.user.id)
+          .eq('is_active', true)
+          .order('created_at', { ascending: false, foreignTable: 'projects' })
+
+        if (!includeDeleted) {
+          console.log('📋 Loading assigned ACTIVE projects (not deleted)...')
+          query = query.is('projects.deleted_at', null)
+        }
+
+        const queryTimeout = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Project query timeout')), 8000)
+        )
+
+        const result = await Promise.race([query, queryTimeout])
+
+        if (result.error) {
+          error = result.error
+        } else {
+          // Transform project_members JOIN result to projects array
+          projects = result.data?.map((member: any) => ({
+            ...member.projects,
+            user_role: member.role // Store the user's role in this project
+          })) || []
+        }
       }
-
-      // Add timeout for main project query
-      const queryTimeout = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Project query timeout')), 8000)
-      )
-
-      const { data: projects, error } = await Promise.race([query, queryTimeout])
 
       if (error) {
         console.error('❌ Error fetching user projects:')
@@ -219,12 +287,12 @@ export class ProjectService {
 
       console.log('✅ Raw projects data:', projects)
 
-      // Transform data to include default member info (without JOIN for now)
+      // Transform data to include member info
       const projectsWithMembers: ProjectWithMembers[] = projects?.map(project => ({
         ...project,
-        members: [], // Empty for now until project_members table is properly set up
+        members: [], // Empty for now - can be loaded separately if needed
         member_count: 0,
-        user_role: 'admin' as any // Default to admin for project owner
+        user_role: project.user_role || (isAdmin ? 'admin' : 'viewer')
       })) || []
 
       console.log('✅ Fetched user projects:', projectsWithMembers.length)

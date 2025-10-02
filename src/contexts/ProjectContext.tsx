@@ -490,8 +490,8 @@ const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) => {
 
       try {
         const [permissions, role] = await Promise.all([
-          ProjectMemberService.getUserProjectPermissions(currentProject.id, user.id),
-          ProjectMemberService.getUserProjectRole(currentProject.id, user.id)
+          ProjectMemberService.getUserProjectPermissions(currentProject.project_id, user.id),
+          ProjectMemberService.getUserProjectRole(currentProject.project_id, user.id)
         ])
 
         setCurrentProjectPermissions(permissions)

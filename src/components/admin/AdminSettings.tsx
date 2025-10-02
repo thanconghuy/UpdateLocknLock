@@ -4,10 +4,11 @@ import { UserRole } from '../../types/auth'
 import DatabaseConfigModule from './DatabaseConfigModule'
 import SystemSetupChecker from './SystemSetupChecker'
 import UserManagement from './UserManagement'
+import EmailManagement from './email/EmailManagement'
 
 export default function AdminSettings() {
   const { userProfile, refreshProfile } = useAuth()
-  const [activeTab, setActiveTab] = useState<'database' | 'users'>('database')
+  const [activeTab, setActiveTab] = useState<'database' | 'users' | 'email'>('database')
   const [systemReady, setSystemReady] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -111,7 +112,23 @@ export default function AdminSettings() {
               >
                 <div className="flex items-center justify-center gap-2">
                   <span>👥</span>
-                  Users (Admin Only)
+                  Users
+                </div>
+              </button>
+            )}
+            {/* Email tab - chỉ hiển thị cho Admin */}
+            {userProfile?.role === 'admin' && (
+              <button
+                onClick={() => setActiveTab('email')}
+                className={`flex-1 px-6 py-4 text-center font-medium transition-colors ${
+                  activeTab === 'email'
+                    ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-500'
+                    : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
+                }`}
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <span>📧</span>
+                  Email
                 </div>
               </button>
             )}
@@ -162,6 +179,19 @@ export default function AdminSettings() {
                     Required role: <span className="font-medium text-red-600">admin</span>
                   </p>
                 </div>
+              </div>
+            )
+          )}
+          {activeTab === 'email' && (
+            userProfile?.role === 'admin' ? (
+              <EmailManagement />
+            ) : (
+              <div className="bg-white rounded-lg shadow-sm border p-8 text-center">
+                <div className="text-red-500 text-6xl mb-4">🚫</div>
+                <h2 className="text-2xl font-bold text-gray-800 mb-4">Access Denied</h2>
+                <p className="text-gray-600 mb-4">
+                  Email Management is only available to administrators.
+                </p>
               </div>
             )
           )}

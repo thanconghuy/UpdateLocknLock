@@ -180,7 +180,17 @@ export default function UserManagement() {
       const result = await controller.createUser(userProfile.id, createForm)
 
       if (result.success && result.data) {
-        setSuccess(`User ${result.data.email} created successfully`)
+        // Show generated password if available
+        const generatedPassword = (result.data as any).generatedPassword
+        if (generatedPassword) {
+          setSuccess(
+            `User ${result.data.email} created successfully!\n\n` +
+            `🔑 Generated Password: ${generatedPassword}\n\n` +
+            `⚠️ IMPORTANT: Save this password now! User will be required to change it on first login.`
+          )
+        } else {
+          setSuccess(`User ${result.data.email} created successfully`)
+        }
         setShowCreateModal(false)
         setCreateForm({
           email: '',

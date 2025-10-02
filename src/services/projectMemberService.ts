@@ -50,48 +50,55 @@ export class ProjectMemberService {
   }
 
   // Lấy danh sách thành viên của project
-  static async getProjectMembers(projectId: string): Promise<ProjectMember[]> {
-    const { data, error } = await supabase
-      .from('project_members')
-      .select(`
-        *,
-        user:auth.users!inner(
-          id,
-          email,
-          raw_user_meta_data
-        )
-      `)
-      .eq('project_id', projectId)
-      .eq('status', 'active')
-      .order('created_at', { ascending: false })
+  static async getProjectMembers(projectId: number): Promise<ProjectMember[]> {
+    try {
+      console.log('🔍 Fetching members for project:', projectId)
 
-    if (error) {
-      console.error('❌ Error fetching project members:', error)
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        throw new Error('User not authenticated')
+      }
+
+      // Use SECURITY DEFINER function to bypass RLS
+      const { data, error } = await supabase.rpc('get_project_members_for_user', {
+        p_project_id: projectId,
+        p_user_id: user.id
+      })
+
+      if (error) {
+        console.error('❌ Error fetching project members:', error)
+        throw error
+      }
+
+      console.log('✅ Fetched project members:', data?.length || 0)
+
+      // Transform data từ function result
+      return (data || []).map((member: any) => ({
+        id: member.id,
+        project_id: member.project_id,
+        user_id: member.user_id,
+        role: member.role,
+        assigned_by: member.invited_by || '',
+        assigned_at: member.assigned_at,
+        is_active: member.status === 'active',
+        permissions: member.permissions || {},
+        user: {
+          id: member.user_id,
+          email: member.user_email,
+          full_name: member.user_full_name || member.user_email,
+          role: member.role, // Project role
+          is_active: member.user_is_active
+        }
+      }))
+    } catch (error) {
+      console.error('❌ Exception fetching project members:', error)
       throw error
     }
-
-    // Transform data để khớp với interface
-    return (data || []).map(member => ({
-      id: member.id,
-      project_id: member.project_id,
-      user_id: member.user_id,
-      role: member.role,
-      assigned_by: member.invited_by || '',
-      assigned_at: member.created_at,
-      is_active: member.status === 'active',
-      permissions: member.permissions || {},
-      user: {
-        id: member.user.id,
-        email: member.user.email,
-        full_name: member.user.raw_user_meta_data?.full_name || member.user.email,
-        role: member.role,
-        is_active: true
-      }
-    }))
   }
 
   // Kiểm tra quyền của user trong project
-  static async getUserProjectPermissions(projectId: string, userId?: string): Promise<UserPermissions> {
+  static async getUserProjectPermissions(projectId: number, userId?: string): Promise<UserPermissions> {
     if (!userId) {
       const { data: { user } } = await supabase.auth.getUser()
       userId = user?.id
@@ -143,7 +150,7 @@ export class ProjectMemberService {
   }
 
   // Lấy role của user trong project
-  static async getUserProjectRole(projectId: string, userId?: string): Promise<string> {
+  static async getUserProjectRole(projectId: number, userId?: string): Promise<string> {
     if (!userId) {
       const { data: { user } } = await supabase.auth.getUser()
       userId = user?.id
@@ -172,51 +179,54 @@ export class ProjectMemberService {
 
   // Thêm thành viên vào project
   static async addProjectMember(
-    projectId: string,
+    projectId: number,
     userId: string,
     role: string = 'viewer',
     permissions?: Record<string, boolean>
   ): Promise<ProjectMember> {
-    const { data: currentUser } = await supabase.auth.getUser()
+    try {
+      console.log('➕ Adding member to project:', { projectId, userId, role })
 
-    const { data, error } = await supabase
-      .from('project_members')
-      .insert({
-        project_id: projectId,
-        user_id: userId,
-        role,
-        status: 'active',
-        invited_by: currentUser.user?.id,
-        joined_at: new Date().toISOString(),
-        permissions: permissions || {}
-      })
-      .select(`
-        *,
-        user:auth.users!inner(id, email, raw_user_meta_data)
-      `)
-      .single()
-
-    if (error) {
-      console.error('❌ Error adding member:', error)
-      throw error
-    }
-
-    return {
-      id: data.id,
-      project_id: data.project_id,
-      user_id: data.user_id,
-      role: data.role,
-      assigned_by: data.invited_by || '',
-      assigned_at: data.created_at,
-      is_active: true,
-      permissions: data.permissions || {},
-      user: {
-        id: data.user.id,
-        email: data.user.email,
-        full_name: data.user.raw_user_meta_data?.full_name || data.user.email,
-        role: data.role,
-        is_active: true
+      const { data: currentUser } = await supabase.auth.getUser()
+      if (!currentUser.user) {
+        throw new Error('User not authenticated')
       }
+
+      // Use SECURITY DEFINER function to add member (bypasses RLS)
+      const { data: newMemberId, error } = await supabase.rpc('add_project_member', {
+        p_project_id: projectId,
+        p_user_id: userId,
+        p_role: role,
+        p_invited_by: currentUser.user.id,
+        p_permissions: permissions || {}
+      })
+
+      if (error) {
+        console.error('❌ Error adding member:', error)
+        throw error
+      }
+
+      console.log('✅ Added member successfully:', newMemberId)
+
+      // Fetch the newly added member details
+      const members = await this.getProjectMembers(projectId)
+      const newMember = members.find(m => m.id === newMemberId)
+
+      if (!newMember) {
+        throw new Error('Failed to fetch newly added member')
+      }
+
+      return newMember
+    } catch (error: any) {
+      console.error('❌ Exception adding member:', error)
+      // Re-throw with user-friendly message
+      if (error.message?.includes('already a member')) {
+        throw new Error('User đã là thành viên của project này')
+      }
+      if (error.message?.includes('does not have permission')) {
+        throw new Error('Bạn không có quyền thêm thành viên vào project này')
+      }
+      throw error
     }
   }
 
@@ -258,54 +268,44 @@ export class ProjectMemberService {
     }
   }
 
-  // Tạo lời mời tham gia project
-  static async createInvitation(
-    projectId: string,
-    email: string,
-    role: string = 'viewer'
-  ): Promise<ProjectInvitation> {
-    const { data: currentUser } = await supabase.auth.getUser()
+  // Lấy danh sách users có thể thêm vào project (chưa là member)
+  static async getAvailableUsers(projectId: number): Promise<Array<{
+    id: string
+    email: string
+    full_name: string | null
+    role: string
+  }>> {
+    try {
+      console.log('🔍 Fetching available users for project:', projectId)
 
-    // Tạo token bảo mật
-    const token = crypto.randomUUID()
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        throw new Error('User not authenticated')
+      }
 
-    const { data, error } = await supabase
-      .from('project_invitations')
-      .insert({
-        project_id: projectId,
-        email,
-        role,
-        invited_by: currentUser.user?.id,
-        token,
-        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 ngày
-        status: 'pending'
+      // Use SECURITY DEFINER function to bypass RLS and avoid infinite recursion
+      const { data, error } = await supabase.rpc('get_available_users_for_project', {
+        p_project_id: projectId,
+        p_user_id: user.id
       })
-      .select()
-      .single()
 
-    if (error) {
-      console.error('❌ Error creating invitation:', error)
+      if (error) {
+        console.error('❌ Error fetching available users:', error)
+        throw error
+      }
+
+      console.log('✅ Available users to add:', data?.length || 0)
+
+      return (data || []).map((user: any) => ({
+        id: user.id,
+        email: user.email,
+        full_name: user.full_name,
+        role: user.role
+      }))
+    } catch (error) {
+      console.error('❌ Exception fetching available users:', error)
       throw error
     }
-
-    return data
-  }
-
-  // Lấy danh sách lời mời đang chờ
-  static async getPendingInvitations(projectId: string): Promise<ProjectInvitation[]> {
-    const { data, error } = await supabase
-      .from('project_invitations')
-      .select('*')
-      .eq('project_id', projectId)
-      .eq('status', 'pending')
-      .gt('expires_at', new Date().toISOString())
-      .order('created_at', { ascending: false })
-
-    if (error) {
-      console.error('❌ Error fetching invitations:', error)
-      throw error
-    }
-
-    return data || []
   }
 }

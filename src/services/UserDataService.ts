@@ -2,7 +2,7 @@
 // USER DATA SERVICE - Database Operations
 // =======================================
 
-import { supabase } from '../lib/supabase'
+import { supabase, supabaseAdmin } from '../lib/supabase'
 import {
   UserProfile,
   CreateUserRequest,
@@ -13,12 +13,19 @@ import {
   UserManagementError,
   USER_ROLES
 } from '../types/userManagement'
+import { generatePassword } from '../utils/passwordGenerator'
+import { EmailService } from './email/EmailService'
 
 export class UserDataService {
   private static instance: UserDataService
   private readonly tableName = 'user_profiles'
+  private emailService: EmailService
 
   // Singleton pattern để đảm bảo chỉ có 1 instance
+  private constructor() {
+    this.emailService = EmailService.getInstance()
+  }
+
   public static getInstance(): UserDataService {
     if (!UserDataService.instance) {
       UserDataService.instance = new UserDataService()
@@ -197,7 +204,7 @@ export class UserDataService {
   /**
    * Tạo user mới
    */
-  async createUser(userData: CreateUserRequest): Promise<OperationResult<UserProfile>> {
+  async createUser(userData: CreateUserRequest): Promise<OperationResult<UserProfile & { generatedPassword?: string }>> {
     try {
       console.log('🔨 UserDataService: Creating new user:', userData.email)
 
@@ -211,12 +218,130 @@ export class UserDataService {
         }
       }
 
+      // Generate password if not provided
+      let generatedPassword: string | undefined
+      let password = userData.password
+
+      if (!password) {
+        generatedPassword = generatePassword({
+          length: 14,
+          includeUppercase: true,
+          includeLowercase: true,
+          includeNumbers: true,
+          includeSymbols: true,
+          excludeSimilarCharacters: true
+        })
+        password = generatedPassword
+        console.log('🔑 Auto-generated secure password for user')
+      }
+
+      // Create Supabase Auth user first using admin client
+      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+        email: userData.email,
+        password: password,
+        email_confirm: true, // Auto-confirm email
+        user_metadata: {
+          full_name: userData.full_name || userData.email
+        }
+      })
+
+      if (authError || !authData.user) {
+        console.error('❌ Error creating auth user:', authError)
+        return {
+          success: false,
+          error: authError?.message || 'Failed to create auth user',
+          timestamp: new Date().toISOString()
+        }
+      }
+
+      console.log('✅ Auth user created:', authData.user.id)
+
+      // Check if profile already exists (in case of previous failed attempt)
+      const existingProfile = await supabase
+        .from(this.tableName)
+        .select('id')
+        .eq('id', authData.user.id)
+        .single()
+
+      if (existingProfile.data) {
+        console.warn('⚠️ User profile already exists, using existing profile')
+        // Profile already exists, just update it
+        const { data: updatedUser, error: updateError } = await supabase
+          .from(this.tableName)
+          .update({
+            email: userData.email,
+            full_name: userData.full_name || userData.email,
+            role: userData.role,
+            primary_role_id: userData.primary_role_id,
+            is_active: userData.is_active !== false,
+            must_change_password: generatedPassword ? true : (userData.must_change_password || false),
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', authData.user.id)
+          .select(`
+            id,
+            email,
+            full_name,
+            role,
+            primary_role_id,
+            is_active,
+            must_change_password,
+            created_at,
+            updated_at
+          `)
+          .single()
+
+        if (updateError) {
+          console.error('❌ Error updating existing user profile:', updateError)
+          return {
+            success: false,
+            error: updateError.message,
+            timestamp: new Date().toISOString()
+          }
+        }
+
+        console.log(`✅ User profile updated: ${updatedUser.email}`)
+
+        // Send welcome email with credentials if password was generated
+        if (generatedPassword) {
+          console.log('📧 Sending welcome email with credentials...')
+          const emailResult = await this.emailService.sendNewUserCredentials(
+            updatedUser.email,
+            updatedUser.full_name || updatedUser.email,
+            generatedPassword
+          )
+
+          if (emailResult.success) {
+            console.log('✅ Welcome email sent successfully')
+          } else {
+            console.warn('⚠️ Failed to send welcome email:', emailResult.error)
+          }
+        }
+
+        const result: any = {
+          ...updatedUser,
+          generatedPassword: generatedPassword
+        }
+
+        return {
+          success: true,
+          data: result,
+          message: generatedPassword
+            ? 'User profile updated with auto-generated password. Welcome email sent.'
+            : 'User profile updated successfully',
+          timestamp: new Date().toISOString()
+        }
+      }
+
+      // Create new user profile
       const newUser = {
+        id: authData.user.id, // Use the same ID as auth user
         email: userData.email,
         full_name: userData.full_name || userData.email,
         role: userData.role,
         primary_role_id: userData.primary_role_id,
         is_active: userData.is_active !== false,
+        must_change_password: generatedPassword ? true : (userData.must_change_password || false),
         created_at: new Date().toISOString()
       }
 
@@ -230,13 +355,16 @@ export class UserDataService {
           role,
           primary_role_id,
           is_active,
+          must_change_password,
           created_at,
           updated_at
         `)
         .single()
 
       if (error) {
-        console.error('❌ Error creating user:', error)
+        console.error('❌ Error creating user profile:', error)
+        // Rollback: delete auth user if profile creation fails
+        await supabaseAdmin.auth.admin.deleteUser(authData.user.id)
         return {
           success: false,
           error: error.message,
@@ -245,10 +373,36 @@ export class UserDataService {
       }
 
       console.log(`✅ User created successfully: ${user.email}`)
+
+      // Send welcome email with credentials if password was generated
+      if (generatedPassword) {
+        console.log('📧 Sending welcome email with credentials...')
+        const emailResult = await this.emailService.sendNewUserCredentials(
+          user.email,
+          user.full_name || user.email,
+          generatedPassword
+        )
+
+        if (emailResult.success) {
+          console.log('✅ Welcome email sent successfully')
+        } else {
+          console.warn('⚠️ Failed to send welcome email:', emailResult.error)
+          // Don't fail user creation if email fails, just log the warning
+        }
+      }
+
+      // Return user data with generated password if applicable
+      const result: any = {
+        ...user,
+        generatedPassword: generatedPassword
+      }
+
       return {
         success: true,
-        data: user,
-        message: 'User created successfully',
+        data: result,
+        message: generatedPassword
+          ? 'User created with auto-generated password. Welcome email sent.'
+          : 'User created successfully',
         timestamp: new Date().toISOString()
       }
 
@@ -383,14 +537,33 @@ export class UserDataService {
     try {
       console.log(`🔓 UserDataService: Activating user: ${id}`)
 
+      // Get user info first for email
+      const userInfo = await this.getUserById(id)
+
       const result = await this.updateUser(id, { is_active: true })
 
       if (result.success) {
         console.log(`✅ User activated successfully: ${id}`)
+
+        // Send account approved email
+        if (userInfo.success && userInfo.data) {
+          console.log('📧 Sending account approved notification...')
+          const emailResult = await this.emailService.sendAccountApproved(
+            userInfo.data.email,
+            userInfo.data.full_name || userInfo.data.email
+          )
+
+          if (emailResult.success) {
+            console.log('✅ Account approved email sent successfully')
+          } else {
+            console.warn('⚠️ Failed to send account approved email:', emailResult.error)
+          }
+        }
+
         return {
           success: true,
           data: true,
-          message: 'User activated successfully',
+          message: 'User activated successfully. Notification email sent.',
           timestamp: new Date().toISOString()
         }
       }

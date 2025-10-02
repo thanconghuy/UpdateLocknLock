@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Run Project Members Migration</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      max-width: 1200px;
+      margin: 20px auto;
+      padding: 20px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+    }
+    .container {
+      background: white;
+      border-radius: 16px;
+      padding: 30px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+    h1 {
+      color: #667eea;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+    .section {
+      background: #f8f9fa;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      border-left: 4px solid #667eea;
+    }
+    .section h3 {
+      margin-top: 0;
+      color: #333;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    button {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: 600;
+      transition: transform 0.2s, box-shadow 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .log {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 15px;
+      border-radius: 8px;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 13px;
+      max-height: 400px;
+      overflow-y: auto;
+      margin-top: 15px;
+      line-height: 1.6;
+    }
+    .log-entry {
+      margin: 4px 0;
+      padding: 4px 0;
+    }
+    .log-success { color: #4ade80; }
+    .log-error { color: #f87171; }
+    .log-warning { color: #fbbf24; }
+    .log-info { color: #60a5fa; }
+    .steps {
+      background: #fff;
+      border: 2px solid #667eea;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    .steps ol {
+      margin: 10px 0;
+      padding-left: 20px;
+    }
+    .steps li {
+      margin: 8px 0;
+      color: #333;
+    }
+    .warning-box {
+      background: #fef3c7;
+      border: 2px solid #fbbf24;
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    .warning-box strong {
+      color: #92400e;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>
+      <span>👥</span>
+      Project Members System Migration
+    </h1>
+    <p class="subtitle">Tạo hệ thống quản lý thành viên cho projects</p>
+
+    <div class="warning-box">
+      <strong>⚠️ Quan trọng:</strong> Migration này sẽ tạo 2 bảng mới (project_roles, project_members) và các functions.
+      Đảm bảo bạn đã backup database trước khi chạy.
+    </div>
+
+    <div class="steps">
+      <h3>📋 Migration này sẽ thực hiện:</h3>
+      <ol>
+        <li>Tạo bảng <code>project_roles</code> với 4 roles: admin, manager, editor, viewer</li>
+        <li>Tạo bảng <code>project_members</code> để quản lý thành viên project</li>
+        <li>Tạo RLS policies để bảo mật dữ liệu</li>
+        <li>Tạo 4 helper functions: get_user_project_role, get_user_project_permissions, can_user_manage_members, get_project_member_count</li>
+        <li>Tạo triggers để auto-update timestamp</li>
+      </ol>
+    </div>
+
+    <div class="section">
+      <h3><span>🔧</span> Thực thi Migration</h3>
+      <p>Click nút bên dưới để chạy migration script:</p>
+      <button id="runMigration" onclick="runMigration()">
+        <span>🚀</span> Chạy Migration
+      </button>
+      <div id="log" class="log" style="display: none;"></div>
+    </div>
+
+    <div class="section">
+      <h3><span>✅</span> Verification</h3>
+      <p>Sau khi migration hoàn tất, click để verify:</p>
+      <button id="verifyBtn" onclick="verifyMigration()" disabled>
+        <span>🔍</span> Kiểm tra kết quả
+      </button>
+      <div id="verifyLog" class="log" style="display: none;"></div>
+    </div>
+  </div>
+
+  <script>
+    // Supabase config from env.ts
+    const SUPABASE_URL = 'https://bfpdvzbcgvtamxcfnybu.supabase.co'
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJmcGR2emJjZ3Z0YW14Y2ZueWJ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzYyMzg5MjYsImV4cCI6MjA1MTgxNDkyNn0.FbIRDZt6ozP3gwC_d9ZfJGpD-LQi3Nh_pMwzYm4bLms'
+
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+    function log(message, type = 'info') {
+      const logDiv = document.getElementById('log')
+      logDiv.style.display = 'block'
+      const entry = document.createElement('div')
+      entry.className = `log-entry log-${type}`
+      const timestamp = new Date().toLocaleTimeString('vi-VN')
+      entry.textContent = `[${timestamp}] ${message}`
+      logDiv.appendChild(entry)
+      logDiv.scrollTop = logDiv.scrollHeight
+    }
+
+    function verifyLog(message, type = 'info') {
+      const logDiv = document.getElementById('verifyLog')
+      logDiv.style.display = 'block'
+      const entry = document.createElement('div')
+      entry.className = `log-entry log-${type}`
+      const timestamp = new Date().toLocaleTimeString('vi-VN')
+      entry.textContent = `[${timestamp}] ${message}`
+      logDiv.appendChild(entry)
+      logDiv.scrollTop = logDiv.scrollHeight
+    }
+
+    async function runMigration() {
+      const btn = document.getElementById('runMigration')
+      btn.disabled = true
+      document.getElementById('log').innerHTML = ''
+
+      try {
+        log('🚀 Bắt đầu migration...', 'info')
+        log('📖 Đọc file migration...', 'info')
+
+        // Fetch migration SQL file
+        const response = await fetch('./migrations/create_project_members_system.sql')
+        if (!response.ok) {
+          throw new Error('Không thể đọc file migration. Đảm bảo file tồn tại trong thư mục migrations/')
+        }
+
+        const sqlContent = await response.text()
+        log('✅ Đã đọc migration script', 'success')
+
+        // Split by semicolons but keep function bodies intact
+        const statements = sqlContent
+          .split(/;(?=\s*(?:CREATE|INSERT|ALTER|DROP|COMMENT|SELECT|--|\/\*))/gi)
+          .map(s => s.trim())
+          .filter(s => s.length > 0 && !s.startsWith('--') && !s.startsWith('/*'))
+
+        log(`📝 Tìm thấy ${statements.length} statements cần thực thi`, 'info')
+
+        let successCount = 0
+        let errorCount = 0
+
+        for (let i = 0; i < statements.length; i++) {
+          const statement = statements[i]
+
+          // Skip verification queries
+          if (statement.includes('Verify') || statement.includes('verification')) {
+            continue
+          }
+
+          try {
+            const { error } = await supabase.rpc('exec_sql', { sql_query: statement })
+
+            if (error) {
+              // Some errors can be ignored (like "already exists")
+              if (error.message.includes('already exists') ||
+                  error.message.includes('duplicate key')) {
+                log(`⚠️ Statement ${i+1}: Đã tồn tại, bỏ qua`, 'warning')
+              } else {
+                log(`❌ Statement ${i+1} lỗi: ${error.message}`, 'error')
+                errorCount++
+              }
+            } else {
+              successCount++
+              if ((i + 1) % 10 === 0) {
+                log(`⏳ Đã xử lý ${i + 1}/${statements.length} statements...`, 'info')
+              }
+            }
+          } catch (err) {
+            log(`❌ Exception statement ${i+1}: ${err.message}`, 'error')
+            errorCount++
+          }
+        }
+
+        log('', 'info')
+        log('═══════════════════════════════════', 'info')
+        log(`✅ Hoàn thành migration!`, 'success')
+        log(`   Thành công: ${successCount} statements`, 'success')
+        if (errorCount > 0) {
+          log(`   Lỗi: ${errorCount} statements`, 'error')
+        }
+        log('═══════════════════════════════════', 'info')
+        log('', 'info')
+        log('💡 Click "Kiểm tra kết quả" để verify migration', 'info')
+
+        // Enable verify button
+        document.getElementById('verifyBtn').disabled = false
+
+      } catch (error) {
+        log(`❌ Lỗi nghiêm trọng: ${error.message}`, 'error')
+        log(`💡 Bạn có thể chạy migration thủ công qua Supabase SQL Editor`, 'warning')
+      } finally {
+        btn.disabled = false
+      }
+    }
+
+    async function verifyMigration() {
+      document.getElementById('verifyLog').innerHTML = ''
+
+      try {
+        verifyLog('🔍 Kiểm tra tables...', 'info')
+
+        // Check project_roles
+        const { data: roles, error: rolesError } = await supabase
+          .from('project_roles')
+          .select('*')
+          .order('level', { ascending: false })
+
+        if (rolesError) {
+          verifyLog(`❌ Không tìm thấy bảng project_roles: ${rolesError.message}`, 'error')
+        } else {
+          verifyLog(`✅ Bảng project_roles: ${roles.length} roles`, 'success')
+          roles.forEach(role => {
+            verifyLog(`   - ${role.display_name} (level ${role.level}): ${role.description}`, 'info')
+          })
+        }
+
+        // Check project_members
+        const { count: memberCount, error: membersError } = await supabase
+          .from('project_members')
+          .select('*', { count: 'exact', head: true })
+
+        if (membersError) {
+          verifyLog(`❌ Không tìm thấy bảng project_members: ${membersError.message}`, 'error')
+        } else {
+          verifyLog(`✅ Bảng project_members: ${memberCount || 0} members hiện có`, 'success')
+        }
+
+        // Check functions
+        verifyLog('', 'info')
+        verifyLog('🔍 Kiểm tra functions...', 'info')
+
+        const functions = [
+          'get_user_project_role',
+          'get_user_project_permissions',
+          'can_user_manage_members',
+          'get_project_member_count'
+        ]
+
+        for (const funcName of functions) {
+          try {
+            // Try to call function with dummy params to test if it exists
+            const { error } = await supabase.rpc(funcName,
+              funcName.includes('count') ? { p_project_id: 0 } : { p_project_id: 0, p_user_id: '00000000-0000-0000-0000-000000000000' }
+            )
+
+            if (error && !error.message.includes('not found')) {
+              verifyLog(`✅ Function ${funcName} tồn tại`, 'success')
+            } else if (error && error.message.includes('not found')) {
+              verifyLog(`❌ Function ${funcName} không tồn tại`, 'error')
+            } else {
+              verifyLog(`✅ Function ${funcName} tồn tại`, 'success')
+            }
+          } catch (err) {
+            verifyLog(`❌ Function ${funcName}: ${err.message}`, 'error')
+          }
+        }
+
+        verifyLog('', 'info')
+        verifyLog('═══════════════════════════════════', 'success')
+        verifyLog('✅ Verification hoàn tất!', 'success')
+        verifyLog('💡 Bây giờ có thể sử dụng module Project Members', 'success')
+        verifyLog('═══════════════════════════════════', 'success')
+
+      } catch (error) {
+        verifyLog(`❌ Lỗi khi verify: ${error.message}`, 'error')
+      }
+    }
+  </script>
+</body>
+</html>

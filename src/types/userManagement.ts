@@ -19,6 +19,7 @@ export interface UserProfile {
   role: string // Direct role string
   primary_role_id: string // Foreign key to roles table
   is_active: boolean
+  must_change_password?: boolean // Flag to force password change on next login
   created_at: string
   updated_at?: string
   roles?: Role // Joined role data
@@ -46,6 +47,8 @@ export interface CreateUserRequest {
   role: string
   primary_role_id: string
   is_active?: boolean
+  password?: string // Optional: if not provided, will be auto-generated
+  must_change_password?: boolean // Force password change on first login
 }
 
 export interface UpdateUserRequest {
@@ -54,6 +57,7 @@ export interface UpdateUserRequest {
   role?: string
   primary_role_id?: string
   is_active?: boolean
+  must_change_password?: boolean
 }
 
 export interface UserRoleChangeRequest {

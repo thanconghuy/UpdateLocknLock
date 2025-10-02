@@ -91,7 +91,7 @@ export default function SystemSetupChecker({ onSetupComplete }: SystemSetupCheck
         .limit(1)
 
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('System setup check timed out after 2 seconds')), 2000)
+        setTimeout(() => reject(new Error('System setup check timed out after 5 seconds')), 5000)
       )
 
       const { data, error } = await Promise.race([checkPromise, timeoutPromise]) as any

@@ -1,6 +1,7 @@
 interface EnvConfig {
   SUPABASE_URL: string;
   SUPABASE_ANON_KEY: string;
+  SUPABASE_SERVICE_ROLE_KEY: string;
   WOOCOMMERCE_BASE_URL: string;
   WOOCOMMERCE_CONSUMER_KEY: string;
   WOOCOMMERCE_CONSUMER_SECRET: string;
@@ -11,6 +12,7 @@ interface EnvConfig {
 export const ENV: EnvConfig = {
   SUPABASE_URL: import.meta.env.VITE_SUPABASE_URL || '',
   SUPABASE_ANON_KEY: import.meta.env.VITE_SUPABASE_ANON_KEY || '',
+  SUPABASE_SERVICE_ROLE_KEY: import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY || '',
   WOOCOMMERCE_BASE_URL: import.meta.env.VITE_WOOCOMMERCE_BASE_URL || 'https://locknlockvietnam.com',
   WOOCOMMERCE_CONSUMER_KEY: import.meta.env.VITE_WOOCOMMERCE_CONSUMER_KEY || '',
   WOOCOMMERCE_CONSUMER_SECRET: import.meta.env.VITE_WOOCOMMERCE_CONSUMER_SECRET || '',

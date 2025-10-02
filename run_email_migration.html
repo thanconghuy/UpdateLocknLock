@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Email Migration Runner</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    body { font-family: Arial; padding: 20px; background: #f5f5f5; }
+    .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; }
+    h1 { color: #667eea; }
+    button { background: #667eea; color: white; border: none; padding: 15px 30px; border-radius: 5px; cursor: pointer; font-size: 16px; }
+    button:disabled { opacity: 0.5; }
+    .log { background: #1e1e1e; color: #ddd; padding: 15px; border-radius: 5px; font-family: monospace; font-size: 13px; max-height: 400px; overflow-y: auto; margin-top: 20px; }
+    .success { color: #81c784; }
+    .error { color: #e57373; }
+    .info { color: #4fc3f7; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📧 Email System Migration</h1>
+    <p>Chạy migration để tạo email tables</p>
+    <button id="btn" onclick="run()">🚀 Chạy Migration</button>
+    <div class="log" id="log"></div>
+  </div>
+  <script>
+    const supabase = window.supabase.createClient(
+      'https://zuzrtaknydgbawgpwdfv.supabase.co',
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp1enJ0YWtueWRnYmF3Z3B3ZGZ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzc1NTcyMzYsImV4cCI6MjA1MzEzMzIzNn0.epNSBjCCUFPdXQJDsaC1x5GGEejr5rw7Qn8lNVX_Qxo'
+    )
+    function log(msg, type='info') {
+      const el = document.getElementById('log')
+      el.innerHTML += \`<div class="\${type}">[${new Date().toLocaleTimeString()}] \${msg}</div>\`
+      el.scrollTop = el.scrollHeight
+    }
+    async function run() {
+      const btn = document.getElementById('btn')
+      btn.disabled = true
+      btn.textContent = '⏳ Đang chạy...'
+      log('🚀 Bắt đầu migration...', 'info')
+      
+      // Chạy migration file trực tiếp
+      const response = await fetch('migrations/create_email_system.sql')
+      const sql = await response.text()
+      
+      log('📤 Đang thực thi SQL...', 'info')
+      const { data, error } = await supabase.rpc('exec_sql', { sql })
+      
+      if (error) {
+        log('❌ Lỗi: ' + error.message, 'error')
+        log('💡 Hãy copy file migrations/create_email_system.sql vào Supabase SQL Editor', 'info')
+      } else {
+        log('✅ Migration thành công!', 'success')
+        // Verify
+        const { data: check } = await supabase.from('email_settings').select('id').limit(1)
+        log('✅ Verified: email_settings table exists', 'success')
+      }
+      
+      btn.disabled = false
+      btn.textContent = '🔄 Chạy lại'
+    }
+  </script>
+</body>
+</html>

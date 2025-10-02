@@ -14,8 +14,9 @@ import ProjectManagement from './components/project/ProjectManagement'
 import UserRoleDebug from './components/debug/UserRoleDebug'
 import { CSVRow, ProductData } from './types'
 import { smartMapCSVData } from './utils/smartCSVMapper'
-import './scripts/debugLoading' // Auto-run debug on app load
-import './scripts/testConnection' // Test Supabase connection
+// Debug scripts disabled to prevent auto-run and cache conflicts
+// import './scripts/debugLoading' // Auto-run debug on app load
+// import './scripts/testConnection' // Test Supabase connection
 
 function ProjectApp() {
   const [rows, setRows] = useState<ProductData[]>([])
@@ -122,9 +123,11 @@ export default function App() {
   try {
     return (
       <AuthProvider>
-        <ProtectedRoute>
-          <AuthenticatedApp />
-        </ProtectedRoute>
+        <ProjectProvider>
+          <ProtectedRoute>
+            <ProjectApp />
+          </ProtectedRoute>
+        </ProjectProvider>
       </AuthProvider>
     )
   } catch (error) {

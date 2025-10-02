@@ -423,15 +423,15 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
             .select('*', { count: 'exact' })
             .eq('project_id', currentProject.project_id)
             .order('updated_at', { ascending: false })
-            .limit(2000) // Increased limit for comprehensive loading
+            .limit(500) // Reduced limit for better performance (was 2000)
         : supa
             .from(table)
             .select('*', { count: 'exact' })
             .order('updated_at', { ascending: false })
-            .limit(2000)
+            .limit(500) // Reduced limit for better performance
 
       const queryTimeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Database query timed out after 30 seconds')), 30000)
+        setTimeout(() => reject(new Error('Database query timed out after 60 seconds')), 60000) // Increased to 60s
       )
 
       const { data: d, error, count } = await Promise.race([queryPromise, queryTimeoutPromise]) as any

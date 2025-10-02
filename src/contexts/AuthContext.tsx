@@ -30,6 +30,8 @@ interface AuthContextType {
   refreshProfile: () => Promise<void>
   hasPermission: (permission: string) => boolean
   isAdmin: () => boolean
+  isEditor: () => boolean
+  isViewer: () => boolean
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -43,7 +45,9 @@ const AuthContext = createContext<AuthContextType>({
   resetPassword: async () => ({ error: null }),
   refreshProfile: async () => {},
   hasPermission: () => false,
-  isAdmin: () => false
+  isAdmin: () => false,
+  isEditor: () => false,
+  isViewer: () => false
 })
 
 export const useAuth = () => {
@@ -420,6 +424,14 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     return userProfile?.role === 'admin'
   }
 
+  const isEditor = (): boolean => {
+    return userProfile?.role === 'editor' || userProfile?.role === 'admin'
+  }
+
+  const isViewer = (): boolean => {
+    return userProfile?.role === 'viewer' || userProfile?.role === 'editor' || userProfile?.role === 'admin'
+  }
+
   const value: AuthContextType = {
     user,
     userProfile,
@@ -431,7 +443,9 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     resetPassword,
     refreshProfile,
     hasPermission,
-    isAdmin
+    isAdmin,
+    isEditor,
+    isViewer
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

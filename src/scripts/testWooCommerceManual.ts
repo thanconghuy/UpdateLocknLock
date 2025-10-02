@@ -71,12 +71,10 @@ export const runWooCommerceManualTest = async () => {
   }
 }
 
-// Auto-run in development if imported
+// Auto-run disabled to prevent cache conflicts during app initialization
+// Use console command: runWooCommerceManualTest() to test manually
 if (typeof window !== 'undefined' && import.meta.env.DEV) {
-  console.log('🚀 Auto-running WooCommerce manual test...')
-  setTimeout(() => {
-    runWooCommerceManualTest().then(success => {
-      console.log(`🧪 Manual WooCommerce test ${success ? 'PASSED' : 'FAILED'}`)
-    })
-  }, 3000) // Wait 3 seconds for app to load
+  console.log('🧪 WooCommerce manual test ready. Run runWooCommerceManualTest() in console to test.')
+  // Expose to window for manual testing
+  ;(window as any).runWooCommerceManualTest = runWooCommerceManualTest
 }
