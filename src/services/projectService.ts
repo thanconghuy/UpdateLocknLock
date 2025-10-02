@@ -122,37 +122,21 @@ export class ProjectService {
     try {
       console.log('🔍 ProjectService: Starting getUserProjects with includeDeleted:', includeDeleted)
 
-      // Check authentication first with timeout
+      // Check authentication first - use getUser instead of getSession (faster)
       console.log('🔍 Checking authentication...')
-      const authPromise = supabase.auth.getSession()
-      const authTimeout = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Auth check timeout')), 3000)
-      )
-
-      let session: any = null
-      let authError: any = null
-
-      try {
-        const result = await Promise.race([authPromise, authTimeout])
-        session = result.data.session
-        authError = result.error
-      } catch (timeoutError) {
-        console.warn('⚠️ Auth check timed out, likely cache conflict. Try clearing browser cache.')
-        console.warn('💡 Suggestion: Use incognito mode or clear cache via Ctrl+Shift+Delete')
-        throw new Error('Authentication timeout - likely cache conflict. Please clear browser cache and try again.')
-      }
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
 
       if (authError) {
         console.error('❌ Auth check failed:', authError)
         throw new Error('Authentication failed: ' + authError.message)
       }
 
-      if (!session?.user) {
+      if (!user) {
         console.error('❌ No authenticated user found')
         throw new Error('User not authenticated - please login first')
       }
 
-      console.log('✅ User authenticated:', session.user.email)
+      console.log('✅ User authenticated:', user.email)
 
       // Quick test query to check database connection and RLS with timeout
       console.log('🔍 Testing database connection with RLS...')
@@ -188,7 +172,7 @@ export class ProjectService {
       const { data: userProfile } = await supabase
         .from('user_profiles')
         .select('role')
-        .eq('id', session.user.id)
+        .eq('id', user.id)
         .single()
 
       const isAdmin = userProfile?.role === 'admin'
@@ -226,53 +210,47 @@ export class ProjectService {
         // NON-ADMIN: Get only projects where user is a member
         console.log('👥 Non-admin user - loading assigned projects only')
 
-        let query = supabase
+        // Step 1: Get project_ids user is member of
+        const { data: memberData, error: memberError } = await supabase
           .from('project_members')
-          .select(`
-            project_id,
-            role,
-            projects!inner (
-              id,
-              project_id,
-              name,
-              description,
-              slug,
-              woocommerce_base_url,
-              woocommerce_consumer_key,
-              woocommerce_consumer_secret,
-              products_table,
-              audit_table,
-              settings,
-              is_active,
-              deleted_at,
-              created_at,
-              updated_at,
-              owner_id
-            )
-          `)
-          .eq('user_id', session.user.id)
-          .eq('is_active', true)
-          .order('created_at', { ascending: false, foreignTable: 'projects' })
+          .select('project_id, role')
+          .eq('user_id', user.id)
+          .eq('status', 'active')
 
-        if (!includeDeleted) {
-          console.log('📋 Loading assigned ACTIVE projects (not deleted)...')
-          query = query.is('projects.deleted_at', null)
-        }
-
-        const queryTimeout = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Project query timeout')), 8000)
-        )
-
-        const result = await Promise.race([query, queryTimeout])
-
-        if (result.error) {
-          error = result.error
+        if (memberError) {
+          error = memberError
+        } else if (!memberData || memberData.length === 0) {
+          console.log('📋 User has no project memberships')
+          projects = []
         } else {
-          // Transform project_members JOIN result to projects array
-          projects = result.data?.map((member: any) => ({
-            ...member.projects,
-            user_role: member.role // Store the user's role in this project
-          })) || []
+          const projectIds = memberData.map(m => m.project_id)
+          const roleMap = new Map(memberData.map(m => [m.project_id, m.role]))
+
+          console.log('📋 User is member of projects:', projectIds)
+
+          // Step 2: Get projects by project_ids
+          let projectQuery = supabase
+            .from('projects')
+            .select('*')
+            .in('project_id', projectIds)
+            .order('created_at', { ascending: false })
+
+          if (!includeDeleted) {
+            console.log('📋 Loading assigned ACTIVE projects (not deleted)...')
+            projectQuery = projectQuery.is('deleted_at', null)
+          }
+
+          const { data: projectData, error: projectError } = await projectQuery
+
+          if (projectError) {
+            error = projectError
+          } else {
+            // Add user_role to each project
+            projects = projectData?.map((project: any) => ({
+              ...project,
+              user_role: roleMap.get(project.project_id) || 'viewer'
+            })) || []
+          }
         }
       }
 

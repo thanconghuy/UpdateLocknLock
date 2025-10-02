@@ -9,6 +9,7 @@ interface UserProfile {
   role?: string
   primary_role_id?: string
   is_active: boolean
+  must_change_password?: boolean
   created_at: string
   roles?: {
     id: string

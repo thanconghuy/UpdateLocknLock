@@ -1,5 +1,5 @@
-import { supabase } from '@/lib/supabase'
-import { ProjectRoleName } from '@/types/projectRoles'
+import { supabase } from '../../lib/supabase'
+import { ProjectRoleName } from '../../types/projectRoles'
 
 // =====================================================
 // TYPES & INTERFACES

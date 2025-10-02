@@ -85,14 +85,15 @@ export const SYSTEM_TO_PROJECT_ROLE_MAPPING = {
  */
 export function canAssignRole(systemRole: string, projectRole: ProjectRoleName): boolean {
   const allowedRoles = SYSTEM_TO_PROJECT_ROLE_MAPPING[systemRole as keyof typeof SYSTEM_TO_PROJECT_ROLE_MAPPING]
-  return allowedRoles ? allowedRoles.includes(projectRole) : false
+  return allowedRoles ? (allowedRoles as readonly ProjectRoleName[]).includes(projectRole) : false
 }
 
 /**
  * Helper function: Get assignable roles for system role
  */
 export function getAssignableRoles(systemRole: string): ProjectRoleName[] {
-  return SYSTEM_TO_PROJECT_ROLE_MAPPING[systemRole as keyof typeof SYSTEM_TO_PROJECT_ROLE_MAPPING] || []
+  const roles = SYSTEM_TO_PROJECT_ROLE_MAPPING[systemRole as keyof typeof SYSTEM_TO_PROJECT_ROLE_MAPPING]
+  return roles ? [...roles] : []
 }
 
 /**

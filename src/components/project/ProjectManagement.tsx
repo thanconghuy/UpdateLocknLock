@@ -27,6 +27,21 @@ export default function ProjectManagement({ onClose }: ProjectManagementProps) {
     projects: projects?.map(p => ({ name: p.name, isActive: p.is_active, deletedAt: p.deleted_at }))
   })
 
+  // Helper: Check if user can manage members
+  const canManageMembers = (project: any): boolean => {
+    // System admin → always true
+    if (userProfile?.role === 'admin') return true
+
+    // Project owner → true
+    if (project.owner_id === userProfile?.id) return true
+
+    // Project admin/manager → true
+    const userRole = project.user_role || ''
+    if (['admin', 'manager'].includes(userRole)) return true
+
+    return false
+  }
+
   const [editingProject, setEditingProject] = useState<Project | null>(null)
   const [formData, setFormData] = useState<Partial<UpdateProjectData>>({})
   const [saving, setSaving] = useState(false)
@@ -440,8 +455,8 @@ export default function ProjectManagement({ onClose }: ProjectManagementProps) {
                   </div>
 
                   <div className="flex items-center space-x-2 ml-4">
-                    {/* Member Management Button */}
-                    {!isDeleted && (
+                    {/* Member Management Button - Only Admin & Manager */}
+                    {!isDeleted && canManageMembers(project) && (
                       <button
                         onClick={() => setShowMemberManagement({ projectId: project.project_id, projectName: project.name })}
                         className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition-colors"

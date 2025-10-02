@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { X, UserPlus, Trash2, Loader2 } from 'lucide-react'
-import { projectMembersService, ProjectMember, AvailableUser, ProjectRole } from '@/services/projectMembers'
-import { useAuth } from '@/contexts/AuthContext'
-import { ProjectRoleName } from '@/types/projectRoles'
+import { projectMembersService, ProjectMember, AvailableUser, ProjectRole } from '../../services/projectMembers'
+import { useAuth } from '../../contexts/AuthContext'
+import { ProjectRoleName } from '../../types/projectRoles'
 
 interface ProjectMembersModalProps {
   projectId: number
@@ -49,13 +49,36 @@ export default function ProjectMembersModal({
 
       setMembers(membersData)
       setAvailableUsers(usersData)
-      setRoles(rolesData)
+
+      // Filter roles based on user permission
+      const filteredRoles = filterRolesByPermission(rolesData, membersData)
+      setRoles(filteredRoles)
     } catch (err: any) {
       setError(err.message || 'Không thể tải dữ liệu')
       console.error('Error loading data:', err)
     } finally {
       setLoading(false)
     }
+  }
+
+  // Helper: Filter roles that user can assign
+  const filterRolesByPermission = (allRoles: ProjectRole[], currentMembers: ProjectMember[]): ProjectRole[] => {
+    // System Admin → Thấy tất cả roles
+    if (userProfile?.role === 'admin') {
+      return allRoles
+    }
+
+    // Check user's role in this project
+    const myMembership = currentMembers.find(m => m.user_id === userProfile?.id)
+    const myRole = myMembership?.project_role
+
+    // If Manager (level 80) → KHÔNG thấy Admin (level 100)
+    if (myRole === 'manager') {
+      return allRoles.filter(role => role.level < 100)
+    }
+
+    // Default: return all (fallback for owner/admin)
+    return allRoles
   }
 
   const handleAddMember = async (e: React.FormEvent) => {

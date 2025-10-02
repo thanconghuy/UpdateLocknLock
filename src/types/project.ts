@@ -30,6 +30,9 @@ export interface Project {
   created_at: string
   updated_at: string
   deleted_at?: string | null  // 🆕 For 2-tier deletion strategy
+
+  // User's role in this project (populated from project_members)
+  user_role?: 'admin' | 'manager' | 'editor' | 'viewer'
 }
 
 // 🆕 WooCommerce Store Entity

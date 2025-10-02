@@ -6,7 +6,11 @@
       "Bash(start:*)",
       "Bash(psql:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx tsc:*)",
+      "Bash(echo \"Exit code: $?\")",
+      "Bash(npm run dev:*)"
     ],
     "deny": [],
     "ask": []
