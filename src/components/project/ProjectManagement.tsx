@@ -3,7 +3,7 @@ import { useProject } from '../../contexts/ProjectContext'
 import { useAuth } from '../../contexts/AuthContext'
 import { Project, UpdateProjectData } from '../../types/project'
 import DeletedProjectBanner from './DeletedProjectBanner'
-// TODO: Import ProjectMembersModal when Phase 4 is complete
+import ProjectMembersModal from './ProjectMembersModal'
 
 interface ProjectManagementProps {
   onClose?: () => void
@@ -32,8 +32,7 @@ export default function ProjectManagement({ onClose }: ProjectManagementProps) {
   const [saving, setSaving] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
-  // TODO: Re-enable member management state in Phase 4
-  // const [showMemberManagement, setShowMemberManagement] = useState<{ projectId: number, projectName: string } | null>(null)
+  const [showMemberManagement, setShowMemberManagement] = useState<{ projectId: number, projectName: string } | null>(null)
 
   // Reset form when editing project changes
   useEffect(() => {
@@ -442,17 +441,14 @@ export default function ProjectManagement({ onClose }: ProjectManagementProps) {
 
                   <div className="flex items-center space-x-2 ml-4">
                     {/* Member Management Button */}
-                    {/* TODO: Re-enable member management button in Phase 4 */}
-                    {/*
                     {!isDeleted && (
                       <button
                         onClick={() => setShowMemberManagement({ projectId: project.project_id, projectName: project.name })}
-                        className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700"
+                        className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
                       >
                         👥 Thành viên
                       </button>
                     )}
-                    */}
 
                     {/* Only disable edit button for deleted projects, allow editing inactive projects */}
                     {!isDeleted && canEditProject(project) && (
@@ -542,8 +538,7 @@ export default function ProjectManagement({ onClose }: ProjectManagementProps) {
         </div>
       )}
 
-      {/* TODO: Re-enable Project Member Management Modal in Phase 4 */}
-      {/*
+      {/* Project Member Management Modal */}
       {showMemberManagement && (
         <ProjectMembersModal
           projectId={showMemberManagement.projectId}
@@ -551,7 +546,6 @@ export default function ProjectManagement({ onClose }: ProjectManagementProps) {
           onClose={() => setShowMemberManagement(null)}
         />
       )}
-      */}
     </div>
   )
 }
