@@ -361,13 +361,22 @@ export default function UserManagement() {
             <h2 className="text-2xl font-bold text-gray-800">User Management</h2>
             <p className="text-gray-600 mt-1">Manage system users and their roles</p>
           </div>
-          {securityContext?.permissions.canCreateUsers && (
+          {/* DISABLED: Add User feature removed - use Registration flow only */}
+          {false && securityContext?.permissions.canCreateUsers && (
             <button
               onClick={() => setShowCreateModal(true)}
               className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
             >
               + Add User
             </button>
+          )}
+          {securityContext?.permissions.canCreateUsers && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <p className="text-sm text-blue-800">
+                <strong>ℹ️ Lưu ý:</strong> Tính năng thêm user đã bị vô hiệu hóa.
+                Vui lòng yêu cầu users đăng ký tài khoản mới qua trang đăng ký.
+              </p>
+            </div>
           )}
         </div>
       </div>

@@ -1,10 +1,11 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useProject } from '../../contexts/ProjectContext'
 import LoginPage from './LoginPage'
 import PendingApprovalPage from './PendingApprovalPage'
 import NoProjectAccessPage from './NoProjectAccessPage'
 import ChangePasswordPage from './ChangePasswordPage'
+import UpdatePasswordPage from './UpdatePasswordPage'
 
 interface ProtectedRouteProps {
   children: React.ReactNode
@@ -14,6 +15,28 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   const { user, userProfile, loading, refreshProfile } = useAuth()
   const { projects, loading: projectsLoading } = useProject()
   const [passwordChanged, setPasswordChanged] = useState(false)
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false)
+
+  // Check if user is in password recovery mode (from email link)
+  useEffect(() => {
+    // Check both URL hash and query string for recovery token
+    const hashParams = new URLSearchParams(window.location.hash.substring(1))
+    const searchParams = new URLSearchParams(window.location.search)
+
+    const typeFromHash = hashParams.get('type')
+    const typeFromQuery = searchParams.get('type')
+
+    console.log('🔍 Checking recovery mode...')
+    console.log('  Hash params:', window.location.hash)
+    console.log('  Query params:', window.location.search)
+    console.log('  Type from hash:', typeFromHash)
+    console.log('  Type from query:', typeFromQuery)
+
+    if (typeFromHash === 'recovery' || typeFromQuery === 'recovery') {
+      console.log('🔐 Password recovery mode detected from email link')
+      setIsPasswordRecovery(true)
+    }
+  }, [])
 
   // Show loading spinner while checking auth
   if (loading) {
@@ -28,6 +51,21 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
           </div>
         </div>
       </div>
+    )
+  }
+
+  // If user is in password recovery mode (from email link), show update password page
+  if (isPasswordRecovery && user) {
+    return (
+      <UpdatePasswordPage
+        onComplete={() => {
+          setIsPasswordRecovery(false)
+          // Clear URL hash and query params
+          window.history.replaceState(null, '', window.location.pathname)
+          // Force reload to go back to normal flow
+          window.location.href = '/'
+        }}
+      />
     )
   }
 
