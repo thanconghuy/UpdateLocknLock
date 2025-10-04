@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react'
 import type { SupabaseConfig, ProductData } from '../types'
+import { supabase } from '../lib/supabase'
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import { detectPlatformLinks } from '../utils/links'
 import { ENV, hasRequiredEnvVars, isProductionMode } from '../config/env'

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { createClient } from '@supabase/supabase-js'
+import { supabase } from '../lib/supabase'
 import { useProject } from '../contexts/ProjectContext'
 
 interface UpdateLog {
@@ -88,8 +88,8 @@ export default function UpdateLogsPage() {
         return
       }
 
-      const supa = createClient(url, key)
-      const { data, error } = await supa
+      // Use centralized supabase client instead of creating new instance
+      const { data, error } = await supabase
         .from(auditTable)
         .select('*')
         .order('updated_at', { ascending: false })

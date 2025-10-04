@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react'
 import type { ProductData } from '../types'
-import { createClient } from '@supabase/supabase-js'
+import { supabase } from '../lib/supabase'
 import { applyAutoUpdateIfNeeded, shouldAutoUpdatePrice } from '../utils/priceAutoUpdater'
 import { useStore } from '../store/useStore'
 import ProductManagementCenter from './ProductManagementCenter'
@@ -135,10 +135,9 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
         return false
       }
 
-      const supa = createClient(url, key)
-
+      // Use centralized supabase client instead of creating new instance
       // Simple connectivity test
-      const { error } = await supa
+      const { error } = await supabase
         .from(table)
         .select('count', { count: 'exact', head: true })
         .limit(1)
@@ -408,7 +407,7 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
       }
 
       setDbStatus('🔗 Connecting to database...')
-      const supa = createClient(url, key)
+      // Use centralized supabase client instead of creating new instance
 
       console.log('📊 Fetching complete product data...')
       setDbStatus('📊 Loading all product data...')
@@ -418,13 +417,13 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
 
       // Add project isolation for multi-tenant data
       const queryPromise = currentProject
-        ? supa
+        ? supabase
             .from(table)
             .select('*', { count: 'exact' })
             .eq('project_id', currentProject.project_id)
             .order('updated_at', { ascending: false })
             .limit(500) // Reduced limit for better performance (was 2000)
-        : supa
+        : supabase
             .from(table)
             .select('*', { count: 'exact' })
             .order('updated_at', { ascending: false })
@@ -453,7 +452,7 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
 
           // Try fallback query with just basic selection
           try {
-            const fallbackResult = await supa
+            const fallbackResult = await supabase
               .from(table)
               .select('*')
               .limit(100)
@@ -815,18 +814,18 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
         return
       }
 
-      const supa = createClient(url, key)
+      // Use centralized supabase client instead of creating new instance
       console.log('Sending update to Supabase:', { table, id: editedProduct.id, data: editedProduct })
-      
+
       // First, verify the product exists with project isolation
       const existenceQuery = currentProject
-        ? supa
+        ? supabase
             .from(table)
             .select('id, sku')
             .eq('id', editedProduct.id)
             .eq('project_id', currentProject.project_id)
             .single()
-        : supa
+        : supabase
             .from(table)
             .select('id, sku')
             .eq('id', editedProduct.id)
@@ -859,13 +858,13 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
 
       // Update the product with project isolation
       const updateQuery = currentProject
-        ? supa
+        ? supabase
             .from(table)
             .update(updateData)
             .eq('id', editedProduct.id)
             .eq('project_id', currentProject.project_id)
             .select()
-        : supa
+        : supabase
             .from(table)
             .update(updateData)
             .eq('id', editedProduct.id)
@@ -918,7 +917,7 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
         if (auditEnabled) {
           try {
             console.log('Attempting to create audit log entry:', auditEntry)
-          const { error: auditError } = await supa
+          const { error: auditError } = await supabase
             .from(auditLogTable)
             .insert([auditEntry])
 
@@ -1043,8 +1042,8 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
         const { url, key, table } = await getDatabaseConfig()
 
         if (url && key) {
-          const supa = createClient(url, key)
-          
+          // Use centralized supabase client instead of creating new instance
+
           const updateData = {
             title: syncedData.title,
             price: syncedData.price,
@@ -1066,12 +1065,12 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
           
           // Update with project isolation
           const syncUpdateQuery = currentProject
-            ? supa
+            ? supabase
                 .from(table)
                 .update(updateData)
                 .eq('id', product.id)
                 .eq('project_id', currentProject.project_id)
-            : supa
+            : supabase
                 .from(table)
                 .update(updateData)
                 .eq('id', product.id)

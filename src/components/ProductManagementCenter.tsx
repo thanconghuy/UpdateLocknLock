@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react'
-import { createClient, SupabaseClient } from '@supabase/supabase-js'
+import { supabase } from '../lib/supabase'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { WooCommerceService } from '../services/woocommerce'
 import { ENV, hasRequiredEnvVars } from '../config/env'
 import { detectPlatformLinks } from '../utils/links'
@@ -63,11 +64,10 @@ export default function ProductManagementCenter({ onSyncComplete, onReloadProduc
 
   const clientRef = useRef<SupabaseClient | null>(null)
 
-  // Initialize Supabase client
+  // Initialize Supabase client with centralized singleton
   React.useEffect(() => {
     if (hasRequiredEnvVars()) {
-      const client = createClient(ENV.SUPABASE_URL, ENV.SUPABASE_ANON_KEY)
-      clientRef.current = client
+      clientRef.current = supabase
     }
   }, [])
 

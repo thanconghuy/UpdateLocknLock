@@ -1,4 +1,5 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { supabase } from '../../lib/supabase';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { ENV } from '../../config/env';
 import { WooCommerceWebhookProduct, WebhookHeaders, WebhookTopic } from './types';
 import { detectPlatformLinks } from '../../utils/links';
@@ -12,7 +13,7 @@ export class WebhookHandler {
     if (!ENV.SUPABASE_URL || !ENV.SUPABASE_ANON_KEY) {
       throw new Error('Missing Supabase configuration');
     }
-    this.supabase = createClient(ENV.SUPABASE_URL, ENV.SUPABASE_ANON_KEY);
+    this.supabase = supabase;
     this.auditEnabled = true;
   }
 
