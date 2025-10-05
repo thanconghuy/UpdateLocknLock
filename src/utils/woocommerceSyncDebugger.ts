@@ -1,5 +1,5 @@
 import { wooCommerceService } from '../services/woocommerce'
-import { createClient } from '@supabase/supabase-js'
+import { supabase } from '../lib/supabase'
 import { ENV, hasRequiredEnvVars } from '../config/env'
 import { detectPlatformLinks } from './links'
 import { parsePriceText } from './priceUtils'
@@ -28,9 +28,7 @@ export interface DebugIssue {
 
 export class WooCommerceSyncDebugger {
   private issues: DebugIssue[] = []
-  private supabase = hasRequiredEnvVars()
-    ? createClient(ENV.SUPABASE_URL, ENV.SUPABASE_ANON_KEY)
-    : null
+  private supabase = hasRequiredEnvVars() ? supabase : null
 
   async runFullDiagnostic(): Promise<DebugResult> {
     console.log('🔧 WOOCOMMERCE SYNC DEBUGGER')

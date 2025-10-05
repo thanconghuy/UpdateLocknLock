@@ -1,8 +1,10 @@
 import React, { useState } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
+import ResetPasswordPage from './ResetPasswordPage'
 
 export default function LoginPage() {
   const [isLogin, setIsLogin] = useState(true)
+  const [showResetPassword, setShowResetPassword] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -12,6 +14,11 @@ export default function LoginPage() {
   const [message, setMessage] = useState('')
 
   const { login, register, resetPassword } = useAuth()
+
+  // If reset password mode, show reset password page
+  if (showResetPassword) {
+    return <ResetPasswordPage onBack={() => setShowResetPassword(false)} />
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -59,21 +66,21 @@ export default function LoginPage() {
     }
   }
 
-  const handleForgotPassword = async () => {
+  const handleForgotPassword = () => {
+    setShowResetPassword(true)
+  }
+
+  const handleForgotPasswordOld = async () => {
     if (!email) {
       setError('Vui lòng nhập email để reset mật khẩu')
       return
     }
 
     setLoading(true)
-    const { error } = await resetPassword(email)
+    // Old implementation - commented out
+    // const { error } = await resetPassword(email)
     setLoading(false)
-
-    if (error) {
-      setError(getErrorMessage(error.message))
-    } else {
-      setMessage('Đã gửi email reset mật khẩu. Vui lòng kiểm tra hộp thư.')
-    }
+    setMessage('Đã gửi email reset mật khẩu. Vui lòng kiểm tra hộp thư.')
   }
 
   const getErrorMessage = (error: string): string => {

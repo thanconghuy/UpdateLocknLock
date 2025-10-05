@@ -15,7 +15,7 @@ import {
   USER_ACTIONS
 } from '../types/userManagement'
 
-import { UserDataService } from './UserDataService'
+import { UserDataService } from './userDataService'
 import { RoleDataService } from './RoleDataService'
 import { PermissionService } from './PermissionService'
 import { UserValidation } from '../utils/userValidation'

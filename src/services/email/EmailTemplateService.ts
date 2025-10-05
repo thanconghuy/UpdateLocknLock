@@ -262,6 +262,85 @@ export class EmailTemplateService {
         body_text: 'Chào mừng {{user_name}}!',
         available_variables: ['user_name'],
         is_active: true
+      },
+      email_confirmation: {
+        template_key: 'email_confirmation',
+        template_name: 'Email Confirmation',
+        subject: 'Xác nhận địa chỉ email của bạn',
+        body_html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+              <h1 style="margin: 0;">📧 Xác nhận Email</h1>
+              <p style="margin: 10px 0 0 0;">Lock & Lock Product Management System</p>
+            </div>
+
+            <div style="background: #fff; padding: 30px; border: 1px solid #e0e0e0; border-top: none;">
+              <p>Xin chào <strong>{{user_name}}</strong>,</p>
+
+              <p>Cảm ơn bạn đã đăng ký tài khoản! Vui lòng xác nhận địa chỉ email của bạn bằng cách nhấn vào nút bên dưới:</p>
+
+              <div style="text-align: center; margin: 30px 0;">
+                <a href="{{confirmation_url}}"
+                   style="display: inline-block;
+                          background: #667eea;
+                          color: white;
+                          padding: 15px 40px;
+                          text-decoration: none;
+                          border-radius: 5px;
+                          font-weight: bold;
+                          font-size: 16px;">
+                  ✅ Xác nhận Email
+                </a>
+              </div>
+
+              <div style="background: #e3f2fd; border-left: 4px solid #2196f3; padding: 15px; margin: 20px 0;">
+                <p style="margin: 0;"><strong>ℹ️ Lưu ý:</strong></p>
+                <ul style="margin: 10px 0;">
+                  <li>Link xác nhận có hiệu lực trong <strong>24 giờ</strong></li>
+                  <li>Sau khi xác nhận, tài khoản sẽ chờ admin phê duyệt</li>
+                  <li>Bạn sẽ nhận email thông báo khi được phê duyệt</li>
+                </ul>
+              </div>
+
+              <p style="color: #666; font-size: 14px; margin-top: 30px;">
+                <strong>Không thể nhấn nút?</strong><br/>
+                Copy và dán link sau vào trình duyệt:<br/>
+                <a href="{{confirmation_url}}" style="color: #667eea; word-break: break-all;">{{confirmation_url}}</a>
+              </p>
+
+              <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 30px 0;" />
+
+              <p style="color: #999; font-size: 12px;">
+                Nếu bạn không đăng ký tài khoản này, vui lòng bỏ qua email này.
+              </p>
+
+              <p>Trân trọng,<br/><strong>Lock & Lock Team</strong></p>
+            </div>
+
+            <div style="background: #f5f5f5; padding: 20px; text-align: center; border-radius: 0 0 10px 10px;">
+              <p style="margin: 0; color: #666; font-size: 12px;">
+                © 2025 Lock & Lock Product Management System
+              </p>
+            </div>
+          </div>
+        `,
+        body_text: `
+Xin chào {{user_name}},
+
+Cảm ơn bạn đã đăng ký tài khoản!
+
+Vui lòng xác nhận email của bạn bằng cách truy cập link sau:
+{{confirmation_url}}
+
+Lưu ý:
+- Link có hiệu lực trong 24 giờ
+- Sau khi xác nhận, tài khoản sẽ chờ admin phê duyệt
+
+Trân trọng,
+Lock & Lock Team
+        `,
+        available_variables: ['user_name', 'user_email', 'confirmation_url'],
+        is_active: true
       }
     }
 

@@ -50,8 +50,29 @@ if (import.meta.env.DEV) {
 
 console.log('🚀 App starting with debug tools...')
 
-createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-)
+// Check if we're in password recovery mode
+function isPasswordRecoveryMode(): boolean {
+  if (typeof window === 'undefined') return false
+  const hashParams = new URLSearchParams(window.location.hash.substring(1))
+  const searchParams = new URLSearchParams(window.location.search)
+  const typeFromHash = hashParams.get('type')
+  const typeFromQuery = searchParams.get('type')
+  const code = searchParams.get('code')
+  const pathname = window.location.pathname
+  const isRecoveryByType = typeFromHash === 'recovery' || typeFromQuery === 'recovery'
+  const isRecoveryByPath = !!(code && pathname === '/update-password')
+  return isRecoveryByType || isRecoveryByPath
+}
+
+// Render WITHOUT StrictMode in recovery mode to prevent double PKCE execution
+if (isPasswordRecoveryMode()) {
+  console.log('🔐 Password recovery mode - rendering WITHOUT StrictMode to prevent double PKCE execution')
+  createRoot(document.getElementById('root')!).render(<App />)
+} else {
+  console.log('✅ Normal mode - rendering with StrictMode')
+  createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  )
+}

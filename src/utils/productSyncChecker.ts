@@ -1,6 +1,6 @@
-import { createClient } from '@supabase/supabase-js'
+import { supabase } from '../lib/supabase'
 import { WooCommerceService } from '../services/woocommerce'
-import { ENV, hasRequiredEnvVars } from '../config/env'
+import { hasRequiredEnvVars } from '../config/env'
 import { detectPlatformLinks } from './links'
 import { parsePriceText } from './priceUtils'
 import { ProductService } from '../services/productService'
@@ -17,9 +17,7 @@ export interface SyncReport {
 }
 
 export class ProductSyncChecker {
-  private supabase = hasRequiredEnvVars()
-    ? createClient(ENV.SUPABASE_URL, ENV.SUPABASE_ANON_KEY)
-    : null
+  private supabase = hasRequiredEnvVars() ? supabase : null
   private currentProject: Project | null = null
 
   constructor(project?: Project) {

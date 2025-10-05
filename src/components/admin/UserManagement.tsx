@@ -41,6 +41,9 @@ export default function UserManagement() {
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null)
+  const [showPasswordModal, setShowPasswordModal] = useState(false)
+  const [generatedPassword, setGeneratedPassword] = useState('')
+  const [createdUserEmail, setCreatedUserEmail] = useState('')
 
   // Form states
   const [createForm, setCreateForm] = useState<CreateUserRequest>({
@@ -180,14 +183,12 @@ export default function UserManagement() {
       const result = await controller.createUser(userProfile.id, createForm)
 
       if (result.success && result.data) {
-        // Show generated password if available
-        const generatedPassword = (result.data as any).generatedPassword
-        if (generatedPassword) {
-          setSuccess(
-            `User ${result.data.email} created successfully!\n\n` +
-            `🔑 Generated Password: ${generatedPassword}\n\n` +
-            `⚠️ IMPORTANT: Save this password now! User will be required to change it on first login.`
-          )
+        // Show generated password in modal if available
+        const password = (result.data as any).generatedPassword
+        if (password) {
+          setGeneratedPassword(password)
+          setCreatedUserEmail(result.data.email)
+          setShowPasswordModal(true)
         } else {
           setSuccess(`User ${result.data.email} created successfully`)
         }
@@ -364,9 +365,9 @@ export default function UserManagement() {
           {securityContext?.permissions.canCreateUsers && (
             <button
               onClick={() => setShowCreateModal(true)}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2"
             >
-              + Add User
+              <span>+</span> Add User
             </button>
           )}
         </div>
@@ -706,6 +707,67 @@ export default function UserManagement() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Password Modal - Show generated password */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <span className="text-3xl">✅</span>
+              </div>
+              <h3 className="text-xl font-bold text-gray-800 mb-2">User Created Successfully!</h3>
+              <p className="text-gray-600">User: <strong>{createdUserEmail}</strong></p>
+            </div>
+
+            <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 mb-6">
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                🔑 Generated Password:
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={generatedPassword}
+                  readOnly
+                  className="flex-1 bg-white border border-gray-300 rounded px-3 py-2 font-mono text-sm"
+                />
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(generatedPassword)
+                    setSuccess('Password copied to clipboard!')
+                  }}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded font-medium transition-colors"
+                >
+                  📋 Copy
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+              <p className="text-sm text-yellow-800">
+                <strong>⚠️ IMPORTANT:</strong>
+              </p>
+              <ul className="text-sm text-yellow-700 mt-2 space-y-1 list-disc list-inside">
+                <li>Save this password now - it won't be shown again</li>
+                <li>A welcome email has been sent to the user</li>
+                <li>User must change password on first login</li>
+              </ul>
+            </div>
+
+            <button
+              onClick={() => {
+                setShowPasswordModal(false)
+                setGeneratedPassword('')
+                setCreatedUserEmail('')
+                setSuccess(`User ${createdUserEmail} created successfully`)
+              }}
+              className="w-full bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded-lg font-medium transition-colors"
+            >
+              Close
+            </button>
           </div>
         </div>
       )}

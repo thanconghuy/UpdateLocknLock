@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react'
 import type { SupabaseConfig, ProductData } from '../types'
-import { createClient, SupabaseClient } from '@supabase/supabase-js'
+import { supabase } from '../lib/supabase'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { ENV, hasRequiredEnvVars } from '../config/env'
 
 interface DatabaseUploaderProps {
@@ -17,8 +18,7 @@ export default function DatabaseUploader({ data }: DatabaseUploaderProps) {
   // Auto-connect on mount if env vars available
   React.useEffect(() => {
     if (hasRequiredEnvVars()) {
-      const client = createClient(ENV.SUPABASE_URL, ENV.SUPABASE_ANON_KEY)
-      clientRef.current = client
+      clientRef.current = supabase
       setStatus('Ready to upload')
     }
   }, [])

@@ -15,6 +15,21 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   const { projects, loading: projectsLoading } = useProject()
   const [passwordChanged, setPasswordChanged] = useState(false)
 
+  // CRITICAL: Check if we're in password recovery mode
+  // If yes, show login page (don't auto-authenticate with recovery session)
+  const isRecoveryMode = () => {
+    if (typeof window === 'undefined') return false
+    const hashParams = new URLSearchParams(window.location.hash.substring(1))
+    const searchParams = new URLSearchParams(window.location.search)
+    const type = hashParams.get('type') || searchParams.get('type')
+    return type === 'recovery'
+  }
+
+  if (isRecoveryMode()) {
+    console.log('🔐 Recovery mode detected in ProtectedRoute - showing login page')
+    return <LoginPage />
+  }
+
   // Show loading spinner while checking auth
   if (loading) {
     return (
@@ -68,7 +83,7 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
         userEmail={userProfile.email}
         onPasswordChanged={async () => {
           setPasswordChanged(true)
-          await refreshProfile() // Refresh profile to get updated must_change_password flag
+          await refreshProfile()
         }}
       />
     )

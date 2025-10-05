@@ -27,7 +27,8 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<{ error: AuthError | null }>
   register: (email: string, password: string, metadata?: any) => Promise<{ error: AuthError | null }>
   logout: () => Promise<void>
-  resetPassword: (email: string) => Promise<{ error: AuthError | null }>
+  resetPassword: (email: string) => Promise<void>
+  updatePassword: (newPassword: string) => Promise<void>
   refreshProfile: () => Promise<void>
   hasPermission: (permission: string) => boolean
   isAdmin: () => boolean
@@ -43,7 +44,8 @@ const AuthContext = createContext<AuthContextType>({
   login: async () => ({ error: null }),
   register: async () => ({ error: null }),
   logout: async () => {},
-  resetPassword: async () => ({ error: null }),
+  resetPassword: async () => {},
+  updatePassword: async () => {},
   refreshProfile: async () => {},
   hasPermission: () => false,
   isAdmin: () => false,
@@ -77,16 +79,18 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       console.log('🔐 AuthContext: Fetching profile for:', userId)
 
-      // Try using the bypass function first
-      const { data: profileData, error: bypassError } = await supabase
-        .rpc('get_user_with_role', { user_id: userId })
+      // TEMPORARILY DISABLED: Bypass function causing errors
+      // const { data: profileData, error: bypassError } = await supabase
+      //   .rpc('get_user_with_role', { user_id: userId })
+      //
+      // if (!bypassError && profileData) {
+      //   console.log('✅ Profile loaded via bypass function:', profileData)
+      //   return profileData
+      // }
+      //
+      // console.warn('⚠️ Bypass function failed, trying direct query:', bypassError)
 
-      if (!bypassError && profileData) {
-        console.log('✅ Profile loaded via bypass function:', profileData)
-        return profileData
-      }
-
-      console.warn('⚠️ Bypass function failed, trying direct query:', bypassError)
+      console.log('🔄 Using direct query...')
 
       // Fallback to direct query
       const { data: profile, error } = await supabase
@@ -405,9 +409,108 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }
 
   const resetPassword = async (email: string) => {
-    console.log('🔐 AuthContext: Resetting password...')
-    const { error } = await supabase.auth.resetPasswordForEmail(email)
-    return { error }
+    console.log('🔐 AuthContext: Sending password reset email to:', email)
+
+    // Auto-detect environment: localhost or production
+    const redirectUrl = `${window.location.origin}/update-password`
+
+    console.log('🔗 Current origin:', window.location.origin)
+    console.log('🔗 Redirect URL:', redirectUrl)
+    console.log('🌍 Environment:', import.meta.env.MODE)
+
+    try {
+      // Use Supabase Auth built-in password reset
+      // This sends an email with a secure link
+      const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: redirectUrl
+      })
+
+      console.log('📩 Supabase response:', { data, error })
+
+      if (error) {
+        console.error('❌ Reset password error:', error)
+        console.error('❌ Error details:', JSON.stringify(error, null, 2))
+        throw new Error(error.message || 'Không thể gửi email đặt lại mật khẩu')
+      }
+
+      console.log('✅ Password reset email sent successfully')
+    } catch (error: any) {
+      console.error('❌ Reset password exception:', error)
+      throw error
+    }
+  }
+
+  const updatePassword = async (newPassword: string) => {
+    console.log('🔐 AuthContext: Updating password...')
+
+    try {
+      // This is called after user clicks the link in email
+      // User must be in a valid session from the magic link
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword
+      })
+
+      if (error) {
+        console.error('❌ Update password error:', error)
+        throw new Error(error.message || 'Không thể cập nhật mật khẩu')
+      }
+
+      console.log('✅ Password updated successfully')
+    } catch (error: any) {
+      console.error('❌ Update password exception:', error)
+      throw error
+    }
+  }
+
+  const resetPasswordFallback = async (email: string, newPassword: string) => {
+    console.log('🔄 Using fallback method for password reset')
+
+    // Find user by email
+    const { data: userData, error: userError } = await supabase
+      .from('user_profiles')
+      .select('id, email, full_name')
+      .eq('email', email.toLowerCase())
+      .single()
+
+    if (userError || !userData) {
+      throw new Error('Email không tìm thấy trong hệ thống')
+    }
+
+    // Update password using simple hash (SHA256)
+    const passwordHash = await hashPasswordSimple(newPassword, userData.id)
+
+    const { error: updateError } = await supabase
+      .from('auth.users')
+      .update({
+        encrypted_password: passwordHash,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', userData.id)
+
+    if (updateError) {
+      throw new Error('Không thể cập nhật mật khẩu: ' + updateError.message)
+    }
+
+    // Reset must_change_password flag
+    await supabase
+      .from('user_profiles')
+      .update({
+        must_change_password: false,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', userData.id)
+
+    console.log('✅ Password reset successful (fallback method)')
+  }
+
+  const hashPasswordSimple = async (password: string, userId: string): Promise<string> => {
+    // Simple SHA256 hash (browser-compatible)
+    const encoder = new TextEncoder()
+    const data = encoder.encode(password + userId)
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+    const hashArray = Array.from(new Uint8Array(hashBuffer))
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+    return hashHex
   }
 
   const hasPermission = (permission: string): boolean => {
@@ -442,6 +545,7 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     register,
     logout,
     resetPassword,
+    updatePassword,
     refreshProfile,
     hasPermission,
     isAdmin,

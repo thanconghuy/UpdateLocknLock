@@ -78,6 +78,7 @@ export type EmailTemplateKey =
   | 'account_approved'
   | 'password_reset'
   | 'welcome_user'
+  | 'email_confirmation'
 
 export interface EmailTemplate {
   id: string
