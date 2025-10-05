@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useProject } from '../../contexts/ProjectContext'
 import LoginPage from './LoginPage'
 import PendingApprovalPage from './PendingApprovalPage'
 import NoProjectAccessPage from './NoProjectAccessPage'
 import ChangePasswordPage from './ChangePasswordPage'
-import UpdatePasswordPage from './UpdatePasswordPage'
 
 interface ProtectedRouteProps {
   children: React.ReactNode
@@ -15,28 +14,21 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   const { user, userProfile, loading, refreshProfile } = useAuth()
   const { projects, loading: projectsLoading } = useProject()
   const [passwordChanged, setPasswordChanged] = useState(false)
-  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false)
 
-  // Check if user is in password recovery mode (from email link)
-  useEffect(() => {
-    // Check both URL hash and query string for recovery token
+  // CRITICAL: Check if we're in password recovery mode
+  // If yes, show login page (don't auto-authenticate with recovery session)
+  const isRecoveryMode = () => {
+    if (typeof window === 'undefined') return false
     const hashParams = new URLSearchParams(window.location.hash.substring(1))
     const searchParams = new URLSearchParams(window.location.search)
+    const type = hashParams.get('type') || searchParams.get('type')
+    return type === 'recovery'
+  }
 
-    const typeFromHash = hashParams.get('type')
-    const typeFromQuery = searchParams.get('type')
-
-    console.log('🔍 Checking recovery mode...')
-    console.log('  Hash params:', window.location.hash)
-    console.log('  Query params:', window.location.search)
-    console.log('  Type from hash:', typeFromHash)
-    console.log('  Type from query:', typeFromQuery)
-
-    if (typeFromHash === 'recovery' || typeFromQuery === 'recovery') {
-      console.log('🔐 Password recovery mode detected from email link')
-      setIsPasswordRecovery(true)
-    }
-  }, [])
+  if (isRecoveryMode()) {
+    console.log('🔐 Recovery mode detected in ProtectedRoute - showing login page')
+    return <LoginPage />
+  }
 
   // Show loading spinner while checking auth
   if (loading) {
@@ -51,21 +43,6 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
           </div>
         </div>
       </div>
-    )
-  }
-
-  // If user is in password recovery mode (from email link), show update password page
-  if (isPasswordRecovery && user) {
-    return (
-      <UpdatePasswordPage
-        onComplete={() => {
-          setIsPasswordRecovery(false)
-          // Clear URL hash and query params
-          window.history.replaceState(null, '', window.location.pathname)
-          // Force reload to go back to normal flow
-          window.location.href = '/'
-        }}
-      />
     )
   }
 
@@ -106,7 +83,7 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
         userEmail={userProfile.email}
         onPasswordChanged={async () => {
           setPasswordChanged(true)
-          await refreshProfile() // Refresh profile to get updated must_change_password flag
+          await refreshProfile()
         }}
       />
     )

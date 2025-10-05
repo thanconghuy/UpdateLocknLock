@@ -234,6 +234,28 @@ export class EmailService {
   }
 
   /**
+   * Send email confirmation link
+   */
+  async sendEmailConfirmation(
+    userEmail: string,
+    userName: string,
+    confirmationUrl: string
+  ): Promise<OperationResult<SendEmailResponse>> {
+    console.log(`📧 Sending email confirmation to: ${userEmail}`)
+
+    return this.sendTemplateEmail(
+      'email_confirmation',
+      userEmail,
+      {
+        user_name: userName,
+        user_email: userEmail,
+        confirmation_url: confirmationUrl
+      },
+      userName
+    )
+  }
+
+  /**
    * Send account approved notification
    */
   async sendAccountApproved(

@@ -16,7 +16,7 @@ import {
   ROLE_LEVELS
 } from '../types/userManagement'
 import { RoleDataService } from './RoleDataService'
-import { UserDataService } from './UserDataService'
+import { UserDataService } from './userDataService'
 
 export class PermissionService {
   private static instance: PermissionService

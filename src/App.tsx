@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { AuthProvider } from './contexts/AuthContext'
 import { ProjectProvider, useProject } from './contexts/ProjectContext'
 import ProtectedRoute from './components/auth/ProtectedRoute'
+import SimplePasswordReset from './components/auth/SimplePasswordReset'
 import Header from './components/layout/Header'
 import ProjectSelector from './components/project/ProjectSelector'
 import ImportPage from './components/ImportPage'
@@ -109,17 +110,37 @@ function ProjectApp() {
   )
 }
 
-function AuthenticatedApp() {
-  return (
-    <ProjectProvider>
-      <ProjectApp />
-    </ProjectProvider>
-  )
+// Check if user is in password recovery mode
+function isPasswordRecoveryMode(): boolean {
+  if (typeof window === 'undefined') return false
+
+  const hashParams = new URLSearchParams(window.location.hash.substring(1))
+  const searchParams = new URLSearchParams(window.location.search)
+
+  const typeFromHash = hashParams.get('type')
+  const typeFromQuery = searchParams.get('type')
+  const code = searchParams.get('code')
+  const pathname = window.location.pathname
+
+  const isRecoveryByType = typeFromHash === 'recovery' || typeFromQuery === 'recovery'
+  const isRecoveryByPath = !!(code && pathname === '/update-password')
+
+  return isRecoveryByType || isRecoveryByPath
 }
+
+// Memoize recovery mode check to prevent re-checking on every render
+const IS_RECOVERY_MODE = isPasswordRecoveryMode()
 
 export default function App() {
   console.log('🚀 Loading full app with authentication and projects...')
 
+  // Check recovery mode FIRST - before any providers load
+  if (IS_RECOVERY_MODE) {
+    console.log('🔐 [App] Recovery mode detected - rendering SimplePasswordReset')
+    return <SimplePasswordReset />
+  }
+
+  // Normal flow - load providers and protected routes
   try {
     return (
       <AuthProvider>

@@ -415,6 +415,10 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
       // Enhanced query with timeout protection
       console.log('🔍 Using safe query with timeout protection...')
 
+      // OPTIMIZED: Reduced limit to 100 for faster initial load
+      // User can paginate to load more if needed
+      const INITIAL_LOAD_LIMIT = 100
+
       // Add project isolation for multi-tenant data
       const queryPromise = currentProject
         ? supabase
@@ -422,15 +426,16 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
             .select('*', { count: 'exact' })
             .eq('project_id', currentProject.project_id)
             .order('updated_at', { ascending: false })
-            .limit(500) // Reduced limit for better performance (was 2000)
+            .limit(INITIAL_LOAD_LIMIT)
         : supabase
             .from(table)
             .select('*', { count: 'exact' })
             .order('updated_at', { ascending: false })
-            .limit(500) // Reduced limit for better performance
+            .limit(INITIAL_LOAD_LIMIT)
 
+      // Reduced timeout to 20 seconds (was 60s)
       const queryTimeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Database query timed out after 60 seconds')), 60000) // Increased to 60s
+        setTimeout(() => reject(new Error('Database query timed out after 20 seconds')), 20000)
       )
 
       const { data: d, error, count } = await Promise.race([queryPromise, queryTimeoutPromise]) as any
@@ -564,15 +569,48 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
         stack: err?.stack?.substring(0, 200)
       })
 
+      // If timeout error, try ultra-light fallback query
+      if (err?.message?.includes('timed out')) {
+        console.log('⚡ Timeout detected - attempting ultra-light fallback query...')
+        try {
+          const { url, key, table } = await getDatabaseConfig()
+
+          // Super simple query - no count, no ordering, just 50 records
+          const fallbackResult = currentProject
+            ? await supabase
+                .from(table)
+                .select('*')
+                .eq('project_id', currentProject.project_id)
+                .limit(50)
+            : await supabase
+                .from(table)
+                .select('*')
+                .limit(50)
+
+          if (fallbackResult.data && fallbackResult.data.length > 0) {
+            console.log(`✅ Fallback query successful - loaded ${fallbackResult.data.length} products (limited)`)
+            setDbRows(fallbackResult.data)
+            setDbStatus(`⚡ Loaded ${fallbackResult.data.length} products (timeout fallback - limited view)`)
+            setHasInitialized(true)
+            setLoadingDb(false)
+            return
+          }
+        } catch (fallbackErr) {
+          console.error('❌ Fallback query also failed:', fallbackErr)
+        }
+      }
+
       const errorMsg = `fetch error: ${err?.message ?? String(err)}`
       setDbStatus(`❌ ${errorMsg}`)
       setDbRows([])
 
       console.log('💡 Troubleshooting suggestions:')
+      console.log('- Database might be too large - consider adding indexes')
       console.log('- Check internet connection')
       console.log('- Verify Supabase credentials')
       console.log('- Ensure table exists and has correct permissions')
       console.log('- Check if API quota is exceeded')
+      console.log('- Consider upgrading Supabase plan for better performance')
 
     } finally {
       setLoadingDb(false)

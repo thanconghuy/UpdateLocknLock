@@ -80,12 +80,7 @@ export default function LoginPage() {
     // Old implementation - commented out
     // const { error } = await resetPassword(email)
     setLoading(false)
-
-    if (false) {
-      setError(getErrorMessage(error.message))
-    } else {
-      setMessage('Đã gửi email reset mật khẩu. Vui lòng kiểm tra hộp thư.')
-    }
+    setMessage('Đã gửi email reset mật khẩu. Vui lòng kiểm tra hộp thư.')
   }
 
   const getErrorMessage = (error: string): string => {

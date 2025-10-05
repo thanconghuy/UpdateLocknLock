@@ -12,6 +12,7 @@ export default function ResetPasswordPage({ onBack }: ResetPasswordPageProps) {
   const [errors, setErrors] = useState<{ email?: string; general?: string }>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [successMessage, setSuccessMessage] = useState('')
+  const [rateLimitCountdown, setRateLimitCountdown] = useState(0)
 
   const validateEmail = (email: string): boolean => {
     if (!email.trim()) {
@@ -25,10 +26,25 @@ export default function ResetPasswordPage({ onBack }: ResetPasswordPageProps) {
     return true
   }
 
+  // Countdown timer effect
+  React.useEffect(() => {
+    if (rateLimitCountdown > 0) {
+      const timer = setTimeout(() => {
+        setRateLimitCountdown(rateLimitCountdown - 1)
+        if (rateLimitCountdown === 1) {
+          // Clear error when countdown reaches 0
+          setErrors({})
+        }
+      }, 1000)
+      return () => clearTimeout(timer)
+    }
+  }, [rateLimitCountdown])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setSuccessMessage('')
     setErrors({})
+    setRateLimitCountdown(0)
 
     if (!validateEmail(email)) {
       return
@@ -55,10 +71,23 @@ export default function ResetPasswordPage({ onBack }: ResetPasswordPageProps) {
     } catch (error: any) {
       console.error('Reset password error:', error)
 
-      if (error.message?.includes('not found') || error.message?.includes('không tìm thấy')) {
+      const errorMsg = error.message?.toLowerCase() || ''
+
+      if (errorMsg.includes('not found') || errorMsg.includes('không tìm thấy')) {
         setErrors({ general: 'Email không tồn tại trong hệ thống' })
-      } else if (error.message?.includes('rate')) {
-        setErrors({ general: 'Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau.' })
+      } else if (errorMsg.includes('rate limit') || errorMsg.includes('email_send_rate_limit')) {
+        setErrors({
+          general:
+            'Bạn đã yêu cầu quá nhiều lần. Vui lòng đợi 60 giây rồi thử lại.'
+        })
+        // Start countdown timer
+        setRateLimitCountdown(60)
+      } else if (errorMsg.includes('over_email_send_rate_limit')) {
+        setErrors({
+          general:
+            'Giới hạn gửi email đã vượt quá mức cho phép. Vui lòng đợi 1 phút rồi thử lại.'
+        })
+        setRateLimitCountdown(60)
       } else {
         setErrors({ general: error.message || 'Đã xảy ra lỗi khi gửi email đặt lại mật khẩu' })
       }
@@ -91,7 +120,27 @@ export default function ResetPasswordPage({ onBack }: ResetPasswordPageProps) {
         {/* Error Message */}
         {errors.general && (
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-red-800 text-sm font-medium">❌ {errors.general}</p>
+            <p className="text-red-800 text-sm font-medium whitespace-pre-line">
+              {rateLimitCountdown > 0 ? '⏱️' : '❌'} {errors.general}
+            </p>
+            {rateLimitCountdown > 0 && (
+              <div className="mt-3">
+                <p className="text-red-700 text-xs mb-2">
+                  💡 Mẹo: Kiểm tra email trước đó trong hộp thư hoặc thư mục Spam.
+                </p>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 bg-red-200 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-red-600 h-full transition-all duration-1000 ease-linear"
+                      style={{ width: `${(rateLimitCountdown / 60) * 100}%` }}
+                    />
+                  </div>
+                  <span className="text-red-700 text-sm font-mono font-bold min-w-[3ch]">
+                    {rateLimitCountdown}s
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -122,9 +171,9 @@ export default function ResetPasswordPage({ onBack }: ResetPasswordPageProps) {
           {/* Submit Button */}
           <button
             type="submit"
-            disabled={isSubmitting || !!successMessage}
+            disabled={isSubmitting || !!successMessage || rateLimitCountdown > 0}
             className={`w-full py-3 px-4 rounded-lg font-medium text-white transition-colors ${
-              isSubmitting || successMessage
+              isSubmitting || successMessage || rateLimitCountdown > 0
                 ? 'bg-gray-400 cursor-not-allowed'
                 : 'bg-blue-600 hover:bg-blue-700'
             }`}
