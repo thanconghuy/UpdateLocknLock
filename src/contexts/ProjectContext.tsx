@@ -94,6 +94,9 @@ const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) => {
   const prevUserIdRef = useRef<string>()
   const prevUserRoleRef = useRef<string>()
   const loadingProjectsRef = useRef(false)
+  const pendingLoadRef = useRef(false)
+  const loadGenerationRef = useRef(0)
+  const lastLoadUserIdRef = useRef<string | undefined>(undefined)
 
   // Load all projects for current user (including deleted projects for admin/manager)
   const loadProjects = async (includeDeleted: boolean = false) => {
@@ -107,11 +110,16 @@ const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) => {
 
     // Prevent concurrent loading
     if (loadingProjectsRef.current) {
-      console.log('⏳ Already loading projects, skipping...')
+      console.log('⏳ Already loading projects, skipping (will queue another load)...')
+      pendingLoadRef.current = true
       return
     }
 
     try {
+      // Track generation and user at start to avoid applying stale results
+      const myGeneration = ++loadGenerationRef.current
+      const userIdAtStart = user?.id
+      lastLoadUserIdRef.current = userIdAtStart
       loadingProjectsRef.current = true
       setLoading(true)
       console.log('🔄 ProjectContext: Starting loadProjects for user:', user.email)
@@ -175,6 +183,12 @@ const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) => {
           userProjects = [] // Continue with empty array instead of throwing
         }
       }
+      // If user changed during load, abort applying results
+      if (userIdAtStart !== user?.id) {
+        console.warn('⚠️ User changed during project load, discarding results')
+        return
+      }
+
       setProjects(userProjects)
 
       console.log('✅ Loaded projects:', userProjects.length)
@@ -245,6 +259,15 @@ const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) => {
     } finally {
       setLoading(false)
       loadingProjectsRef.current = false
+      // Only the latest generation triggers queued load
+      if (pendingLoadRef.current && loadGenerationRef.current) {
+        pendingLoadRef.current = false
+        // Defer to next tick to allow state to settle
+        setTimeout(() => {
+          console.log('🔁 Running queued loadProjects...')
+          loadProjects(includeDeleted)
+        }, 0)
+      }
     }
   }
 
@@ -440,6 +463,10 @@ const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) => {
       setShowProjectSelector(false)
       setLoading(false)
       localStorage.removeItem('selectedProjectId')
+      // Reset loading flags and pending queue on logout
+      loadingProjectsRef.current = false
+      pendingLoadRef.current = false
+      loadGenerationRef.current++
     }
 
     prevUserIdRef.current = currentUserId

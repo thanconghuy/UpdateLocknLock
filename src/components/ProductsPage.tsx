@@ -167,6 +167,10 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
   const [autoUpdateSummary, setAutoUpdateSummary] = useState<string>('')
   const [recentlyUpdated, setRecentlyUpdated] = useState<Set<string>>(new Set())
   const [syncingProducts, setSyncingProducts] = useState<Set<string>>(new Set())
+  // Server-side incremental loading
+  const [nextOffset, setNextOffset] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const BATCH_SIZE = 200
 
 
   const platforms = useMemo(() => {
@@ -415,30 +419,30 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
       // Enhanced query with timeout protection
       console.log('🔍 Using safe query with timeout protection...')
 
-      // OPTIMIZED: Reduced limit to 100 for faster initial load
-      // User can paginate to load more if needed
-      const INITIAL_LOAD_LIMIT = 100
+      // Initial incremental load using server-side pagination
+      // Remove count to avoid heavy queries on large tables
+      const INITIAL_LOAD_LIMIT = BATCH_SIZE
 
       // Add project isolation for multi-tenant data
-      const queryPromise = currentProject
+      const baseQuery = currentProject
         ? supabase
             .from(table)
-            .select('*', { count: 'exact' })
+            .select('*')
             .eq('project_id', currentProject.project_id)
             .order('updated_at', { ascending: false })
-            .limit(INITIAL_LOAD_LIMIT)
         : supabase
             .from(table)
-            .select('*', { count: 'exact' })
+            .select('*')
             .order('updated_at', { ascending: false })
-            .limit(INITIAL_LOAD_LIMIT)
+
+      const queryPromise = baseQuery.range(0, INITIAL_LOAD_LIMIT - 1)
 
       // Reduced timeout to 20 seconds (was 60s)
       const queryTimeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('Database query timed out after 20 seconds')), 20000)
       )
 
-      const { data: d, error, count } = await Promise.race([queryPromise, queryTimeoutPromise]) as any
+      const { data: d, error } = await Promise.race([queryPromise, queryTimeoutPromise]) as any
 
       if (error) {
         console.error('❌ Database query error:', error)
@@ -482,8 +486,7 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
 
       console.log('✅ Data loaded successfully!')
       console.log('📊 Results summary:')
-      console.log(`- Total rows: ${d?.length ?? 0}`)
-      console.log(`- Database count: ${count ?? 'unknown'}`)
+      console.log(`- Loaded rows: ${d?.length ?? 0}`)
 
       if (d && d.length > 0) {
         // Analyze data completeness
@@ -535,6 +538,8 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
         } : null
       })
       setDbRows(d || [])
+      setNextOffset(d?.length || 0)
+      setHasMore((d?.length || 0) === INITIAL_LOAD_LIMIT)
 
       // Data quality assessment
       let qualityNote = ''
@@ -575,7 +580,7 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
         try {
           const { url, key, table } = await getDatabaseConfig()
 
-          // Super simple query - no count, no ordering, just 50 records
+          // Super simple query - no count, limited records
           const fallbackResult = currentProject
             ? await supabase
                 .from(table)
@@ -590,6 +595,8 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
           if (fallbackResult.data && fallbackResult.data.length > 0) {
             console.log(`✅ Fallback query successful - loaded ${fallbackResult.data.length} products (limited)`)
             setDbRows(fallbackResult.data)
+            setNextOffset(fallbackResult.data.length)
+            setHasMore(false)
             setDbStatus(`⚡ Loaded ${fallbackResult.data.length} products (timeout fallback - limited view)`)
             setHasInitialized(true)
             setLoadingDb(false)
@@ -674,6 +681,44 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
       // fetchFromDb will be called by the first useEffect when hasInitialized becomes false
     }
   }, [refreshKey])
+
+  // Load more from DB (server-side pagination)
+  async function loadMoreFromDb() {
+    if (loadingDb || !hasMore) return
+    try {
+      setLoadingDb(true)
+      setDbStatus(`🔄 Loading more products... (${nextOffset} → ${nextOffset + BATCH_SIZE})`)
+
+      const { url, key, table } = await getDatabaseConfig()
+      if (!url || !key || !table) return
+
+      const baseQuery = currentProject
+        ? supabase
+            .from(table)
+            .select('*')
+            .eq('project_id', currentProject.project_id)
+            .order('updated_at', { ascending: false })
+        : supabase
+            .from(table)
+            .select('*')
+            .order('updated_at', { ascending: false })
+
+      const { data, error } = await baseQuery.range(nextOffset, nextOffset + BATCH_SIZE - 1)
+      if (error) {
+        console.error('❌ Load more error:', error)
+        setDbStatus(`❌ Load more failed: ${error.message}`)
+        return
+      }
+
+      setDbRows(prev => ([...(prev || []), ...(data || [])]))
+      const loaded = data?.length || 0
+      setNextOffset(nextOffset + loaded)
+      setHasMore(loaded === BATCH_SIZE)
+      setDbStatus(`✅ Loaded ${nextOffset + loaded} products`)
+    } finally {
+      setLoadingDb(false)
+    }
+  }
 
   // Debug logging when dbRows changes
   useEffect(() => {
@@ -1379,6 +1424,16 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
               </span>
             )}
           </button>
+          {dbRows && dbRows.length > 0 && hasMore && (
+            <button
+              className="neo-btn"
+              onClick={loadMoreFromDb}
+              disabled={loadingDb}
+              title={`Load next ${BATCH_SIZE} products`}
+            >
+              {loadingDb ? 'Loading more...' : `⬇️ Load more (${BATCH_SIZE})`}
+            </button>
+          )}
           <button
             className="px-3 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700 text-sm"
             onClick={testDatabaseConnection}

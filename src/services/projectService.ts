@@ -138,13 +138,13 @@ export class ProjectService {
 
       console.log('✅ User authenticated:', user.email)
 
-      // Quick test query to check database connection and RLS with timeout
+      // Quick test query to check database connection and RLS with timeout (lightweight)
       console.log('🔍 Testing database connection with RLS...')
       const testStartTime = Date.now()
 
       const dbTestPromise = supabase
         .from('projects')
-        .select('count')
+        .select('id')
         .limit(1)
 
       const dbTestTimeout = new Promise<never>((_, reject) =>
@@ -187,8 +187,8 @@ export class ProjectService {
 
         let query = supabase
           .from('projects')
-          .select('*')
-          .order('created_at', { ascending: false })
+          .select('id, project_id, name, is_active, deleted_at, created_at, updated_at, woocommerce_base_url, woocommerce_consumer_key, woocommerce_consumer_secret, products_table')
+          .limit(50)
 
         if (!includeDeleted) {
           console.log('📋 Loading ACTIVE and INACTIVE projects (not deleted)...')
@@ -200,12 +200,26 @@ export class ProjectService {
         }
 
         const queryTimeout = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Project query timeout')), 8000)
+          setTimeout(() => reject(new Error('Project query timeout')), 5000)
         )
 
-        const result = await Promise.race([query, queryTimeout])
-        projects = result.data || []
-        error = result.error
+        try {
+          const result = await Promise.race([query, queryTimeout])
+          projects = result.data || []
+          error = result.error
+        } catch (primaryTimeout) {
+          console.warn('⚠️ Primary project query timed out, trying ultra-light fallback...')
+          const { data: simpleProjects, error: simpleError } = await supabase
+            .from('projects')
+            .select('id, project_id, name, is_active, deleted_at, woocommerce_base_url, woocommerce_consumer_key, woocommerce_consumer_secret, products_table')
+            .limit(20)
+
+          if (simpleError) {
+            error = simpleError
+          } else {
+            projects = simpleProjects || []
+          }
+        }
       } else {
         // NON-ADMIN: Get only projects where user is a member
         console.log('👥 Non-admin user - loading assigned projects only')
@@ -231,16 +245,34 @@ export class ProjectService {
           // Step 2: Get projects by project_ids
           let projectQuery = supabase
             .from('projects')
-            .select('*')
+            .select('id, project_id, name, is_active, deleted_at, created_at, woocommerce_base_url, woocommerce_consumer_key, woocommerce_consumer_secret, products_table')
             .in('project_id', projectIds)
-            .order('created_at', { ascending: false })
 
           if (!includeDeleted) {
             console.log('📋 Loading assigned ACTIVE projects (not deleted)...')
             projectQuery = projectQuery.is('deleted_at', null)
           }
 
-          const { data: projectData, error: projectError } = await projectQuery
+          // Add timeout and fallback
+          const listTimeout = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Project list timeout')), 5000)
+          )
+
+          let projectData: any[] | null = null
+          try {
+            const res = await Promise.race([projectQuery, listTimeout]) as any
+            projectData = res.data
+            error = res.error
+          } catch (listErr) {
+            console.warn('⚠️ Assigned projects query timed out, trying simple fallback...')
+            const { data: simpleAssigned, error: simpleAssignedErr } = await supabase
+              .from('projects')
+              .select('id, project_id, name, is_active, deleted_at, woocommerce_base_url, woocommerce_consumer_key, woocommerce_consumer_secret, products_table')
+              .in('project_id', projectIds)
+              .limit(20)
+            projectData = simpleAssigned || []
+            error = simpleAssignedErr
+          }
 
           if (projectError) {
             error = projectError

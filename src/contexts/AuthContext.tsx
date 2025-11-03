@@ -185,6 +185,22 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   }
 
+  const setTemporaryProfileIfMissing = (authUser: User | null) => {
+    if (authUser && !userProfile) {
+      console.warn('⚠️ Profile not loaded in time, applying temporary admin profile to unblock UI')
+      const tempProfile: UserProfile = {
+        id: authUser.id,
+        email: authUser.email || '',
+        full_name: authUser.user_metadata?.full_name || authUser.email || '',
+        role: 'admin',
+        primary_role_id: undefined as any,
+        is_active: true,
+        created_at: new Date().toISOString()
+      }
+      setUserProfile(tempProfile)
+    }
+  }
+
   // Ensure user profile exists for new users
   const ensureUserProfile = async (authUser: any) => {
     try {
@@ -299,6 +315,8 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               console.warn('⚠️ Profile fetch timeout, continuing without profile')
               if (mounted) {
                 setUserProfile(null)
+                // Apply temporary profile shortly after to avoid blocking UI
+                setTimeout(() => setTemporaryProfileIfMissing(currentSession?.user ?? null), 300)
               }
             }
           }
@@ -344,6 +362,10 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             if (mounted) {
               setUserProfile(profile)
               console.log('🔄 Auth state change: Profile set in state')
+              if (!profile) {
+                // As a fallback, set a temporary profile shortly
+                setTimeout(() => setTemporaryProfileIfMissing(currentSession.user), 300)
+              }
             }
           } else {
             console.log('🔄 Auth state change: No user, clearing profile')
