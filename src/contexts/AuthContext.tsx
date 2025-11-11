@@ -273,10 +273,10 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           return newCount
         })
 
-        // Add timeout protection (2 seconds max)
+        // Add timeout protection (5 seconds max - increased for slow networks)
         const initPromise = supabase.auth.getSession()
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Auth init timeout')), 2000)
+          setTimeout(() => reject(new Error('Auth init timeout')), 5000)
         )
 
         let currentSession: any = null
@@ -285,7 +285,7 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           const result = await Promise.race([initPromise, timeoutPromise])
           currentSession = result.data.session
         } catch (timeoutError) {
-          console.warn('⚠️ AuthContext: Init timeout - likely cache conflict')
+          console.warn('⚠️ AuthContext: Init timeout - likely cache conflict or slow network')
           console.warn('💡 Suggestion: Clear browser cache or use incognito mode')
           // Continue with null session to allow normal flow
           currentSession = null
@@ -298,10 +298,10 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           if (currentSession?.user) {
             console.log('🔄 Init: Fetching profile for:', currentSession.user.id)
 
-            // Add profile fetch timeout (2 seconds max)
+            // Add profile fetch timeout (5 seconds max - increased for reliability)
             const profilePromise = fetchUserProfile(currentSession.user.id)
             const profileTimeoutPromise = new Promise<UserProfile | null>((_, reject) =>
-              setTimeout(() => reject(new Error('Profile fetch timeout')), 2000)
+              setTimeout(() => reject(new Error('Profile fetch timeout')), 5000)
             )
 
             try {
@@ -310,13 +310,26 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               if (mounted) {
                 setUserProfile(profile)
                 console.log('🔄 Init: Profile set in state')
+                // If profile is null, set temporary immediately to unblock UI
+                if (!profile) {
+                  console.warn('⚠️ Profile is null, applying temporary profile to unblock UI')
+                  setTemporaryProfileIfMissing(currentSession.user)
+                }
               }
             } catch (profileError) {
-              console.warn('⚠️ Profile fetch timeout, continuing without profile')
+              console.warn('⚠️ Profile fetch timeout, applying temporary profile to unblock UI')
               if (mounted) {
-                setUserProfile(null)
-                // Apply temporary profile shortly after to avoid blocking UI
-                setTimeout(() => setTemporaryProfileIfMissing(currentSession?.user ?? null), 300)
+                // Set temporary profile immediately to avoid blocking UI
+                setTemporaryProfileIfMissing(currentSession.user)
+                // Also try to fetch in background (non-blocking)
+                fetchUserProfile(currentSession.user.id).then(profile => {
+                  if (mounted && profile) {
+                    console.log('✅ Background profile fetch succeeded, updating profile')
+                    setUserProfile(profile)
+                  }
+                }).catch(err => {
+                  console.warn('⚠️ Background profile fetch also failed:', err)
+                })
               }
             }
           }
@@ -354,17 +367,44 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
             // Special handling for SIGNED_IN event (new registration or login)
             if (event === 'SIGNED_IN') {
-              await ensureUserProfile(currentSession.user)
+              // Run ensureUserProfile in background (non-blocking)
+              ensureUserProfile(currentSession.user).catch(err => {
+                console.warn('⚠️ ensureUserProfile failed (non-blocking):', err)
+              })
             }
 
-            const profile = await fetchUserProfile(currentSession.user.id)
-            console.log('🔄 Auth state change: Got profile:', profile)
-            if (mounted) {
-              setUserProfile(profile)
-              console.log('🔄 Auth state change: Profile set in state')
-              if (!profile) {
-                // As a fallback, set a temporary profile shortly
-                setTimeout(() => setTemporaryProfileIfMissing(currentSession.user), 300)
+            // Add timeout protection for profile fetch in auth state change
+            const profilePromise = fetchUserProfile(currentSession.user.id)
+            const profileTimeoutPromise = new Promise<UserProfile | null>((_, reject) =>
+              setTimeout(() => reject(new Error('Profile fetch timeout')), 5000)
+            )
+
+            try {
+              const profile = await Promise.race([profilePromise, profileTimeoutPromise])
+              console.log('🔄 Auth state change: Got profile:', profile)
+              if (mounted) {
+                setUserProfile(profile)
+                console.log('🔄 Auth state change: Profile set in state')
+                // If profile is null, set temporary immediately
+                if (!profile) {
+                  console.warn('⚠️ Profile is null in auth state change, applying temporary profile')
+                  setTemporaryProfileIfMissing(currentSession.user)
+                }
+              }
+            } catch (profileError) {
+              console.warn('⚠️ Profile fetch timeout in auth state change, applying temporary profile')
+              if (mounted) {
+                // Set temporary profile immediately to avoid blocking UI
+                setTemporaryProfileIfMissing(currentSession.user)
+                // Also try to fetch in background (non-blocking)
+                fetchUserProfile(currentSession.user.id).then(profile => {
+                  if (mounted && profile) {
+                    console.log('✅ Background profile fetch succeeded, updating profile')
+                    setUserProfile(profile)
+                  }
+                }).catch(err => {
+                  console.warn('⚠️ Background profile fetch also failed:', err)
+                })
               }
             }
           } else {

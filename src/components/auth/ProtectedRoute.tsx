@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useProject } from '../../contexts/ProjectContext'
 import LoginPage from './LoginPage'
@@ -14,6 +14,7 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   const { user, userProfile, loading, refreshProfile } = useAuth()
   const { projects, loading: projectsLoading } = useProject()
   const [passwordChanged, setPasswordChanged] = useState(false)
+  const [profileLoadTimeout, setProfileLoadTimeout] = useState(false)
 
   // CRITICAL: Check if we're in password recovery mode
   // If yes, show login page (don't auto-authenticate with recovery session)
@@ -24,6 +25,25 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
     const type = hashParams.get('type') || searchParams.get('type')
     return type === 'recovery'
   }
+
+  // If authenticated but profile not loaded yet, set up timeout to refresh profile
+  useEffect(() => {
+    if (user && !userProfile) {
+      const timeout = setTimeout(async () => {
+        console.warn('⚠️ Profile loading timeout - attempting to refresh profile')
+        setProfileLoadTimeout(true)
+        // Try to refresh profile one more time
+        try {
+          await refreshProfile()
+        } catch (err) {
+          console.warn('⚠️ Profile refresh failed, will proceed with temporary profile if available')
+        }
+      }, 3000) // 3 second timeout
+      return () => clearTimeout(timeout)
+    } else {
+      setProfileLoadTimeout(false)
+    }
+  }, [user, userProfile, refreshProfile])
 
   if (isRecoveryMode()) {
     console.log('🔐 Recovery mode detected in ProtectedRoute - showing login page')
@@ -51,20 +71,33 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
     return <LoginPage />
   }
 
-  // If authenticated but profile not loaded yet, show loading
-  if (user && !userProfile) {
+  if (user && !userProfile && !profileLoadTimeout) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="bg-white p-8 rounded-lg shadow-lg max-w-md w-full text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
           <h2 className="text-lg font-medium text-gray-800 mb-2">Loading Profile...</h2>
           <p className="text-gray-600">Please wait while we load your user profile</p>
+          <div className="mt-4 text-xs text-gray-500">
+            This should only take a few seconds...
+          </div>
         </div>
       </div>
     )
   }
 
+  // If profile timeout but user exists, allow UI to proceed
+  // AuthContext should have set temporary profile by now
+  // If not, we'll proceed anyway to avoid infinite loading
+  if (user && !userProfile && profileLoadTimeout) {
+    console.warn('⚠️ Profile load timeout exceeded - allowing UI to proceed')
+    console.warn('💡 AuthContext should have set temporary profile - if not, it will be set on next render')
+    // Continue to next checks - if userProfile is still null, it will be handled by AuthContext
+    // This prevents infinite "Loading Profile..." screen
+  }
+
   // If user account is not active, show pending approval page
+  // Note: userProfile might be temporary profile at this point
   if (userProfile && !userProfile.is_active) {
     console.log('🔒 User account is inactive, showing pending approval page')
     return (

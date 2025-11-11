@@ -6,6 +6,7 @@ import { useStore } from '../store/useStore'
 import ProductManagementCenter from './ProductManagementCenter'
 import { useSettingsService } from '../services/settingsService'
 import { useProject } from '../contexts/ProjectContext'
+import { useAuth } from '../contexts/AuthContext'
 import { ENV } from '../config/env'
 import NoActiveProjectBanner from './project/NoActiveProjectBanner'
 
@@ -54,10 +55,12 @@ function getStockStatus(hetHangValue: any) {
 export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloadProducts }: Props) {
   const { updateProductInWooCommerce, syncProductFromWooCommerce, clearStoreForProjectSwitch } = useStore()
   const settingsService = useSettingsService()
-  const { currentProject, loading: projectLoading, setShowProjectSelector } = useProject()
+  const { currentProject, loading: projectLoading, setShowProjectSelector, projects } = useProject()
+  const { user, userProfile } = useAuth()
   const [visibleFields, setVisibleFields] = useState<string[]>(ALL_FIELDS.filter(f => f !== 'updated_at'))
   const [filter, setFilter] = useState<{ platform?: string, recentlyUpdated?: boolean, timeFilter?: string, stockStatus?: 'instock' | 'outofstock', syncStatus?: string }>({})
   const [searchQuery, setSearchQuery] = useState<string>('')
+  const [hasProjectAccess, setHasProjectAccess] = useState<boolean | null>(null)
 
   // Helper function for reloading products
   const handleReloadProducts = () => {
@@ -171,6 +174,8 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
   const [nextOffset, setNextOffset] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const BATCH_SIZE = 200
+  // Cache last project ID to avoid unnecessary reloads
+  const lastLoadedProjectIdRef = React.useRef<number | null>(null)
 
 
   const platforms = useMemo(() => {
@@ -416,30 +421,56 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
       console.log('📊 Fetching complete product data...')
       setDbStatus('📊 Loading all product data...')
 
-      // Enhanced query with timeout protection
-      console.log('🔍 Using safe query with timeout protection...')
+      // Optimized query - only select essential columns for faster loading
+      console.log('🔍 Using optimized query with essential columns only...')
+
+      // Define essential columns needed for display (exclude heavy columns like description, raw data)
+      const essentialColumns = [
+        'id',
+        'project_id',
+        'website_id',
+        'title',
+        'sku',
+        'price',
+        'promotional_price',
+        'image_url',
+        'external_url',
+        'currency',
+        'het_hang',
+        'link_shopee',
+        'gia_shopee',
+        'link_tiktok',
+        'gia_tiktok',
+        'link_lazada',
+        'gia_lazada',
+        'link_dmx',
+        'gia_dmx',
+        'link_tiki',
+        'gia_tiki',
+        'updated_at',
+        'created_at'
+      ].join(',')
 
       // Initial incremental load using server-side pagination
-      // Remove count to avoid heavy queries on large tables
       const INITIAL_LOAD_LIMIT = BATCH_SIZE
 
-      // Add project isolation for multi-tenant data
+      // Add project isolation for multi-tenant data with optimized column selection
       const baseQuery = currentProject
         ? supabase
             .from(table)
-            .select('*')
+            .select(essentialColumns)
             .eq('project_id', currentProject.project_id)
             .order('updated_at', { ascending: false })
         : supabase
             .from(table)
-            .select('*')
+            .select(essentialColumns)
             .order('updated_at', { ascending: false })
 
       const queryPromise = baseQuery.range(0, INITIAL_LOAD_LIMIT - 1)
 
-      // Reduced timeout to 20 seconds (was 60s)
+      // Reduced timeout to 8 seconds for faster feedback
       const queryTimeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Database query timed out after 20 seconds')), 20000)
+        setTimeout(() => reject(new Error('Database query timed out after 8 seconds')), 8000)
       )
 
       const { data: d, error } = await Promise.race([queryPromise, queryTimeoutPromise]) as any
@@ -459,11 +490,12 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
           errorGuidance = '\n💡 Lỗi cột không tồn tại - Tool sẽ sử dụng query đơn giản hơn'
           console.log('🔄 Attempting fallback query without specific columns...')
 
-          // Try fallback query with just basic selection
+          // Try fallback query with minimal columns
           try {
+            const minimalColumns = 'id,project_id,website_id,title,sku,price,promotional_price,updated_at'
             const fallbackResult = await supabase
               .from(table)
-              .select('*')
+              .select(minimalColumns)
               .limit(100)
 
             if (!fallbackResult.error && fallbackResult.data) {
@@ -574,22 +606,25 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
         stack: err?.stack?.substring(0, 200)
       })
 
-      // If timeout error, try ultra-light fallback query
+      // If timeout error, try ultra-light fallback query with minimal columns
       if (err?.message?.includes('timed out')) {
         console.log('⚡ Timeout detected - attempting ultra-light fallback query...')
         try {
           const { url, key, table } = await getDatabaseConfig()
 
-          // Super simple query - no count, limited records
+          // Minimal columns for fastest query
+          const minimalColumns = 'id,project_id,website_id,title,sku,price,promotional_price,updated_at'
+          
+          // Super simple query - minimal columns, limited records, no ordering
           const fallbackResult = currentProject
             ? await supabase
                 .from(table)
-                .select('*')
+                .select(minimalColumns)
                 .eq('project_id', currentProject.project_id)
                 .limit(50)
             : await supabase
                 .from(table)
-                .select('*')
+                .select(minimalColumns)
                 .limit(50)
 
           if (fallbackResult.data && fallbackResult.data.length > 0) {
@@ -627,36 +662,81 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
   }
 
 
+  // Verify user has access to current project
+  useEffect(() => {
+    if (!currentProject || !user || !userProfile) {
+      setHasProjectAccess(null)
+      return
+    }
+
+    // System admin has access to all projects
+    if (userProfile.role === 'admin') {
+      console.log('✅ Admin user - has access to all projects')
+      setHasProjectAccess(true)
+      return
+    }
+
+    // Check if currentProject is in user's accessible projects list
+    const hasAccess = projects.some(p => p.id === currentProject.id)
+    
+    if (hasAccess) {
+      console.log('✅ User has access to project:', currentProject.name)
+      setHasProjectAccess(true)
+    } else {
+      console.warn('⚠️ User does NOT have access to project:', currentProject.name)
+      console.warn('📋 User accessible projects:', projects.map(p => p.name))
+      setHasProjectAccess(false)
+    }
+  }, [currentProject, projects, user, userProfile])
+
   // Auto-load data on mount (only once) - wait for project to be ready
   useEffect(() => {
+    // Check if project changed - if same project, don't reload
+    const currentProjectId = currentProject?.project_id ?? null
+    const projectChanged = lastLoadedProjectIdRef.current !== currentProjectId
+
     // Only fetch when:
-    // 1. Not initialized yet
+    // 1. Not initialized yet OR project changed
     // 2. Not currently loading
     // 3. Project context is ready (not loading)
     // 4. Have a current project
-    if (!hasInitialized && !loadingDb && !projectLoading && currentProject) {
+    // 5. User has access to the project (or access check is pending)
+    const shouldFetch = (!hasInitialized || projectChanged) && 
+                       !loadingDb && 
+                       !projectLoading && 
+                       currentProject && 
+                       hasProjectAccess !== false
+
+    if (shouldFetch) {
       console.log('🚀 ProductsPage: Conditions met - fetching data from database')
-      console.log('📍 Current project:', currentProject.name)
+      console.log('📍 Current project:', currentProject.name, `(ID: ${currentProject.project_id})`)
+      console.log('🔐 Access check:', hasProjectAccess === true ? 'GRANTED' : hasProjectAccess === null ? 'PENDING' : 'DENIED')
+      console.log('🔄 Project changed:', projectChanged ? 'YES' : 'NO')
+      lastLoadedProjectIdRef.current = currentProjectId
       fetchFromDb()
     } else {
       const reasons = []
-      if (hasInitialized) reasons.push('already initialized')
+      if (hasInitialized && !projectChanged) reasons.push('already initialized (same project)')
       if (loadingDb) reasons.push('db loading')
       if (projectLoading) reasons.push('project loading')
       if (!currentProject) reasons.push('no project')
+      if (hasProjectAccess === false) reasons.push('no project access')
 
       if (reasons.length > 0) {
         console.log('⏳ ProductsPage: Waiting to fetch data -', reasons.join(', '))
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasInitialized, loadingDb, projectLoading, currentProject])
+  }, [hasInitialized, loadingDb, projectLoading, currentProject?.project_id, hasProjectAccess])
 
   // 🔄 IMPORTANT: Reset and reload data when currentProject changes (project switching)
   useEffect(() => {
-    if (currentProject && !projectLoading) {
+    const currentProjectId = currentProject?.project_id ?? null
+    const projectChanged = lastLoadedProjectIdRef.current !== currentProjectId
+
+    if (currentProject && !projectLoading && projectChanged) {
       console.log('🔄 ProductsPage: Current project changed, resetting data and reloading...')
-      console.log('📍 New project:', currentProject.name)
+      console.log('📍 New project:', currentProject.name, `(ID: ${currentProject.project_id})`)
       console.log('📋 New products table:', currentProject.products_table)
 
       // 🧹 Clear Zustand store to prevent data contamination between projects
@@ -664,11 +744,14 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
 
       // Reset component state to trigger fresh fetch from the new project's table
       setDbRows([])
+      setNextOffset(0)
+      setHasMore(false)
       setDbStatus('🔄 Switching project - loading data...')
       setHasInitialized(false) // Reset to trigger fresh fetch
+      lastLoadedProjectIdRef.current = currentProjectId
       // fetchFromDb will be called by the first useEffect when hasInitialized becomes false
     }
-  }, [currentProject?.id, currentProject?.products_table, clearStoreForProjectSwitch]) // Track project ID and table changes
+  }, [currentProject?.project_id, currentProject?.products_table, projectLoading, clearStoreForProjectSwitch]) // Track project_id (not id) and table changes
 
   // Refresh data when refreshKey changes (after sync operations)
   useEffect(() => {
@@ -692,15 +775,42 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
       const { url, key, table } = await getDatabaseConfig()
       if (!url || !key || !table) return
 
+      // Use same optimized columns as initial load
+      const essentialColumns = [
+        'id',
+        'project_id',
+        'website_id',
+        'title',
+        'sku',
+        'price',
+        'promotional_price',
+        'image_url',
+        'external_url',
+        'currency',
+        'het_hang',
+        'link_shopee',
+        'gia_shopee',
+        'link_tiktok',
+        'gia_tiktok',
+        'link_lazada',
+        'gia_lazada',
+        'link_dmx',
+        'gia_dmx',
+        'link_tiki',
+        'gia_tiki',
+        'updated_at',
+        'created_at'
+      ].join(',')
+
       const baseQuery = currentProject
         ? supabase
             .from(table)
-            .select('*')
+            .select(essentialColumns)
             .eq('project_id', currentProject.project_id)
             .order('updated_at', { ascending: false })
         : supabase
             .from(table)
-            .select('*')
+            .select(essentialColumns)
             .order('updated_at', { ascending: false })
 
       const { data, error } = await baseQuery.range(nextOffset, nextOffset + BATCH_SIZE - 1)
@@ -1209,6 +1319,32 @@ export default function ProductsPage({ data, refreshKey, onSyncComplete, onReloa
             <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
             <h2 className="text-lg font-medium text-gray-800 mb-2">Loading Project...</h2>
             <p className="text-gray-600">Please wait while we load your project data</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Check if user has access to current project
+  if (currentProject && hasProjectAccess === false) {
+    return (
+      <div className="neo-card">
+        <div className="flex items-center justify-center py-12">
+          <div className="text-center max-w-md">
+            <div className="text-6xl mb-4">🔒</div>
+            <h2 className="text-xl font-semibold text-gray-800 mb-2">Access Denied</h2>
+            <p className="text-gray-600 mb-4">
+              You do not have permission to view products in project: <strong>{currentProject.name}</strong>
+            </p>
+            <p className="text-sm text-gray-500 mb-4">
+              This project is not assigned to your account. Please contact an administrator to be added to this project.
+            </p>
+            <button
+              onClick={() => setShowProjectSelector(true)}
+              className="neo-btn primary"
+            >
+              Select Another Project
+            </button>
           </div>
         </div>
       </div>
