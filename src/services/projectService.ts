@@ -138,37 +138,7 @@ export class ProjectService {
 
       console.log('✅ User authenticated:', user.email)
 
-      // Quick test query to check database connection and RLS with timeout (lightweight)
-      console.log('🔍 Testing database connection with RLS...')
-      const testStartTime = Date.now()
-
-      const dbTestPromise = supabase
-        .from('projects')
-        .select('id')
-        .limit(1)
-
-      const dbTestTimeout = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Database test timeout')), 5000)
-      )
-
-      const { data: testData, error: testError } = await Promise.race([dbTestPromise, dbTestTimeout])
-
-      console.log('🔍 Test query completed in', Date.now() - testStartTime, 'ms')
-
-      if (testError) {
-        console.error('❌ Database/RLS test failed:', testError)
-        console.error('❌ Error details:', {
-          message: testError.message,
-          details: testError.details,
-          hint: testError.hint,
-          code: testError.code
-        })
-        throw testError
-      }
-
-      console.log('✅ Database connection and RLS test passed')
-
-      // Check if user is admin
+      // Check if user is admin (removed unnecessary test query to improve performance)
       const { data: userProfile } = await supabase
         .from('user_profiles')
         .select('role')
@@ -200,7 +170,7 @@ export class ProjectService {
         }
 
         const queryTimeout = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Project query timeout')), 5000)
+          setTimeout(() => reject(new Error('Project query timeout')), 10000)
         )
 
         try {
@@ -255,7 +225,7 @@ export class ProjectService {
 
           // Add timeout and fallback
           const listTimeout = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Project list timeout')), 5000)
+            setTimeout(() => reject(new Error('Project list timeout')), 10000)
           )
 
           let projectData: any[] | null = null
@@ -274,8 +244,8 @@ export class ProjectService {
             error = simpleAssignedErr
           }
 
-          if (projectError) {
-            error = projectError
+          if (error) {
+            // Error already set from query
           } else {
             // Add user_role to each project
             projects = projectData?.map((project: any) => ({

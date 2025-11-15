@@ -141,10 +141,10 @@ const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) => {
         profileLoaded: !!userProfile
       })
 
-      // Add timeout to prevent infinite loading (reduced to 3s for faster recovery)
+      // Add timeout to prevent infinite loading (increased to 10s for better reliability)
       const loadPromise = ProjectService.getUserProjects(shouldIncludeDeleted)
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Project loading timed out after 3 seconds')), 3000)
+        setTimeout(() => reject(new Error('Project loading timed out after 10 seconds')), 10000)
       )
 
       let userProjects: ProjectWithMembers[] = []
@@ -483,7 +483,11 @@ const ProjectProvider: React.FC<ProjectProviderProps> = ({ children }) => {
     // 3. Role actually changed
     if (user?.id && userProfile !== null && currentUserRole !== prevUserRole) {
       console.log('🔄 User role changed, reloading projects...', prevUserRole, '=>', currentUserRole)
-      loadProjects()
+      // Debounce to prevent rapid reloads
+      const timeoutId = setTimeout(() => {
+        loadProjects()
+      }, 300) // 300ms debounce
+      return () => clearTimeout(timeoutId)
     }
 
     prevUserRoleRef.current = currentUserRole

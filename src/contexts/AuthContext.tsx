@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react'
+import React, { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react'
 import { AuthError, User, Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 
@@ -73,9 +73,19 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   // Prevent infinite reload detection
   const [initCount, setInitCount] = useState(0)
+  
+  // Cache to prevent duplicate profile fetches
+  const profileFetchCache = useRef<Map<string, { profile: UserProfile | null; timestamp: number }>>(new Map())
+  const PROFILE_CACHE_TTL = 5000 // 5 seconds cache
 
   // Fetch user profile using bypass function to avoid RLS issues
   const fetchUserProfile = async (userId: string): Promise<UserProfile | null> => {
+    // Check cache first
+    const cached = profileFetchCache.current.get(userId)
+    if (cached && Date.now() - cached.timestamp < PROFILE_CACHE_TTL) {
+      console.log('✅ Using cached profile for:', userId)
+      return cached.profile
+    }
     try {
       console.log('🔐 AuthContext: Fetching profile for:', userId)
 
@@ -141,9 +151,13 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           }
 
           console.log('✅ Profile created:', newProfile)
+          // Cache the result
+          profileFetchCache.current.set(userId, { profile: newProfile, timestamp: Date.now() })
           return newProfile
         }
 
+        // Cache null result too
+        profileFetchCache.current.set(userId, { profile: null, timestamp: Date.now() })
         return null
       }
 
@@ -165,10 +179,14 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         }
       }
 
+      // Cache the result
+      profileFetchCache.current.set(userId, { profile, timestamp: Date.now() })
       return profile
 
     } catch (error) {
       console.error('❌ Profile fetch exception:', error)
+      // Cache null result on error too
+      profileFetchCache.current.set(userId, { profile: null, timestamp: Date.now() })
       return null
     }
   }
@@ -176,6 +194,8 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const refreshProfile = async () => {
     if (user) {
       console.log('🔄 RefreshProfile: Starting for user:', user.id)
+      // Clear cache to force fresh fetch
+      profileFetchCache.current.delete(user.id)
       const profile = await fetchUserProfile(user.id)
       console.log('🔄 RefreshProfile: Got profile:', profile)
       setUserProfile(profile)
@@ -273,10 +293,10 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           return newCount
         })
 
-        // Add timeout protection (5 seconds max - increased for slow networks)
+        // Add timeout protection (10 seconds max - increased for slow networks)
         const initPromise = supabase.auth.getSession()
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Auth init timeout')), 5000)
+          setTimeout(() => reject(new Error('Auth init timeout')), 10000)
         )
 
         let currentSession: any = null
@@ -298,10 +318,10 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           if (currentSession?.user) {
             console.log('🔄 Init: Fetching profile for:', currentSession.user.id)
 
-            // Add profile fetch timeout (5 seconds max - increased for reliability)
+            // Add profile fetch timeout (8 seconds max - increased for reliability)
             const profilePromise = fetchUserProfile(currentSession.user.id)
             const profileTimeoutPromise = new Promise<UserProfile | null>((_, reject) =>
-              setTimeout(() => reject(new Error('Profile fetch timeout')), 5000)
+              setTimeout(() => reject(new Error('Profile fetch timeout')), 8000)
             )
 
             try {
@@ -376,7 +396,7 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             // Add timeout protection for profile fetch in auth state change
             const profilePromise = fetchUserProfile(currentSession.user.id)
             const profileTimeoutPromise = new Promise<UserProfile | null>((_, reject) =>
-              setTimeout(() => reject(new Error('Profile fetch timeout')), 5000)
+              setTimeout(() => reject(new Error('Profile fetch timeout')), 8000)
             )
 
             try {
@@ -442,6 +462,9 @@ const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       console.log('🔐 AuthContext: Starting logout process...')
 
+      // Clear profile cache
+      profileFetchCache.current.clear()
+      
       // Clear profile immediately
       setUserProfile(null)
       setUser(null)
